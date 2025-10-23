@@ -1,0 +1,118 @@
+/* SPDX-License-Identifier: Zlib
+|-------------------------------------------------------------------------------------------------------->>
+| https://wake.tools - [saudio-sapp.c] - JIT C Runtime - C99+ (extensions)
+|-------------------------------------------------------------------------------------------------------->>
+| Adapted from the Sokol samples by Andreas 'floooh' (zlib/libpng License)
+| Converted to JIT (.jc) - zero build time - live execution - safe memory (bound checking) - GDB-ready
+| Original: https://github.com/floooh/sokol-samples/blob/master/sapp/saudio-sapp.c
+|-------------------------------------------------------------------------------------------------------->>
+| run: wake saudio-sapp.jc
+|-------------------------------------------------------------------------------------------------------->>
+| WAKE-LANG (Wake-Lang Executable Metadata - parsed by Wake - targets: w32, w64 [Windows 32/64-bit])
+|-------------------------------------------------------------------------------------------------------->>
+	<:jit:w32|w64>
+		#Jit.add .sm/saudio-sapp.sm
+		>
+		{wk.module.sys.r}wake-tools/tcc-v0.1w/tcc
+			-xc -shared {this.file}
+
+			-b -l.{build.sys.r}.wake-tools--tcc.bcheck-atom-v0.1w
+			-Werror
+			-bench
+			-v
+
+			-L {wk.libs}
+				-l.{build.sys}.wake-tools--sokol-ig-v0.1w    -I {wk.include}wake-tools/sokol-v0.1w
+				-l.{build.sys}.wake-tools--imgui-v0.1w       -I {wk.include}wake-tools/imgui-v0.1w
+				-l.{build.sys}.wake-tools--jit-v0.1w         -I {wk.include}wake-tools/jit-v0.1w
+				-l.{build.sys}.wake-tools--sapp-v0.1w        -I {wk.include}wake-tools/sapp-v0.1w
+				-l.{build.sys}.wake-tools--sgfx-v0.1w        -I {wk.include}wake-tools/sgfx-v0.1w
+
+			-l msvcrt -l shell32 -l dwmapi -l user32
+
+		-o {jit.file}
+		>
+		#Jit.reload
+	<:/jit:>
+|-------------------------------------------------------------------------------------------------------->>
+*/
+//------------------------------------------------------------------------------
+//  saudio-sapp.c
+//  Test sokol-audio
+//------------------------------------------------------------------------------
+#include <jit.h>
+
+#define USE_DBG_UI
+#include <sokol.h>
+
+#include "sokol_audio.h"
+#include "sokol_log.h"
+
+#define NUM_SAMPLES (32)
+
+static struct {
+    sg_pass_action pass_action;
+    uint32_t even_odd;
+    int sample_pos;
+    float samples[NUM_SAMPLES];
+} state;
+
+void init(void) {
+    sg_setup(&(sg_desc){
+        .environment = sglue_environment(),
+        .logger.func = slog_func,
+    });
+    saudio_setup(&(saudio_desc){ .logger.func = slog_func });
+    state.pass_action = (sg_pass_action) {
+        .colors[0] = {
+            .load_action = SG_LOADACTION_CLEAR,
+            .clear_value = { 1.0f, 0.5f, 0.0f, 1.0f }
+        }
+    };
+}
+
+void frame(void) {
+    sg_begin_pass(&(sg_pass){ .action = state.pass_action, .swapchain = sglue_swapchain() });
+    int num_frames = saudio_expect();
+    float s;
+    for (int i = 0; i < num_frames; i++) {
+        if (state.even_odd++ & (1<<5)) {
+            s = 0.05f;
+        } else {
+            s = -0.05f;
+        }
+        state.samples[state.sample_pos++] = s;
+        if (state.sample_pos == NUM_SAMPLES) {
+            state.sample_pos = 0;
+            saudio_push(state.samples, NUM_SAMPLES);
+        }
+    }
+    sg_end_pass();
+    sg_commit();
+    if(jit_request_close) sapp_quit();
+}
+
+void cleanup(void) {
+    saudio_shutdown();
+    sg_shutdown();
+}
+
+int main(int argc, char *argv[]) {
+    sapp_run(&(sapp_desc){
+        .init_cb = init,
+        .frame_cb = frame,
+        .cleanup_cb = cleanup,
+        .width = 400,
+        .height = 300,
+        .swap_interval = 1,
+        .window_title = "Sokol Audio Test",
+        .icon.sokol_default = true,
+        .logger.func = slog_func,
+    });
+    #ifndef HAS_ASYNC_LOOP
+    sapp_quit();
+    #endif
+    return 0;
+
+}
+

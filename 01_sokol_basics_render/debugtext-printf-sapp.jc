@@ -1,0 +1,153 @@
+/* SPDX-License-Identifier: Zlib
+|-------------------------------------------------------------------------------------------------------->>
+| https://wake.tools - [debugtext-printf-sapp.c] - JIT C Runtime - C99+ (extensions)
+|-------------------------------------------------------------------------------------------------------->>
+| Adapted from the Sokol samples by Andreas 'floooh' (zlib/libpng License)
+| Converted to JIT (.jc) - zero build time - live execution - safe memory (bound checking) - GDB-ready
+| Original: https://github.com/floooh/sokol-samples/blob/master/sapp/debugtext-printf-sapp.c
+|-------------------------------------------------------------------------------------------------------->>
+| run: wake debugtext-printf-sapp.jc
+|-------------------------------------------------------------------------------------------------------->>
+| WAKE-LANG (Wake-Lang Executable Metadata - parsed by Wake - targets: w32, w64 [Windows 32/64-bit])
+|-------------------------------------------------------------------------------------------------------->>
+	<:jit:w32|w64>
+		#Jit.add .sm/debugtext-printf-sapp.sm
+		>
+		{wk.module.sys.r}wake-tools/tcc-v0.1w/tcc
+			-xc -shared {this.file}
+
+			-b -l.{build.sys.r}.wake-tools--tcc.bcheck-atom-v0.1w
+			-Werror
+			-bench
+			-v
+
+			-L {wk.libs}
+				-l.{build.sys}.wake-tools--sokol-ig-v0.1w    -I {wk.include}wake-tools/sokol-v0.1w
+				-l.{build.sys}.wake-tools--imgui-v0.1w       -I {wk.include}wake-tools/imgui-v0.1w
+				-l.{build.sys}.wake-tools--jit-v0.1w         -I {wk.include}wake-tools/jit-v0.1w
+				-l.{build.sys}.wake-tools--sapp-v0.1w        -I {wk.include}wake-tools/sapp-v0.1w
+				-l.{build.sys}.wake-tools--sgfx-v0.1w        -I {wk.include}wake-tools/sgfx-v0.1w
+
+			-l msvcrt -l shell32 -l dwmapi -l user32
+
+		-o {jit.file}
+		>
+		#Jit.reload
+	<:/jit:>
+|-------------------------------------------------------------------------------------------------------->>
+*/
+//------------------------------------------------------------------------------
+//  debugtext-printf-sapp.c
+//
+//  Simple text rendering with sokol_debugtext.h, formatting, tabs, etc...
+//------------------------------------------------------------------------------
+#include <jit.h>
+
+#define USE_DBG_UI
+#include <sokol.h>
+
+#include "sokol_log.h"
+#include "sokol_debugtext.h"
+
+#define NUM_FONTS  (3)
+#define FONT_KC854 (0)
+#define FONT_C64   (1)
+#define FONT_ORIC  (2)
+
+typedef struct {
+    uint8_t r, g, b;
+} color_t;
+
+static struct {
+    sg_pass_action pass_action;
+    color_t palette[NUM_FONTS];
+} state = {
+    .pass_action = {
+        .colors[0] = {
+            .load_action = SG_LOADACTION_CLEAR,
+            .clear_value =  { 0.0f, 0.125f, 0.25f, 0.5f }
+        }
+    },
+    .palette = {
+        { 0xf4, 0x43, 0x36 },
+        { 0x21, 0x96, 0xf3 },
+        { 0x4c, 0xaf, 0x50 },
+    }
+};
+
+
+static void init(void) {
+    sg_setup(&(sg_desc){
+        .environment = sglue_environment(),
+        .logger.func = slog_func,
+    });
+    __cdbgui_setup(sapp_sample_count());
+    sdtx_setup(&(sdtx_desc_t){
+        .fonts = {
+            [FONT_KC854] = sdtx_font_kc854(),
+            [FONT_C64]   = sdtx_font_c64(),
+            [FONT_ORIC]  = sdtx_font_oric()
+        },
+        .logger.func = slog_func,
+    });
+}
+
+static void my_printf_wrapper(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    sdtx_vprintf(fmt, args);
+    va_end(args);
+}
+
+static void frame(void) {
+    uint32_t frame_count = (uint32_t)sapp_frame_count();
+    double frame_time = sapp_frame_duration() * 1000.0;
+
+    sdtx_canvas(sapp_width() * 0.5f, sapp_height() * 0.5f);
+    sdtx_origin(3.0f, 3.0f);
+    for (int i = 0; i < NUM_FONTS; i++) {
+        color_t color = state.palette[i];
+        sdtx_font(i);
+        sdtx_color3b(color.r, color.g, color.b);
+        sdtx_printf("Hello '%s'!\n", (frame_count & (1<<7)) ? "Welt" : "World");
+        sdtx_printf("\tFrame Time:\t\t%.3f\n", frame_time);
+        my_printf_wrapper("\tFrame Count:\t%d\t0x%04X\n", frame_count, frame_count);
+        sdtx_putr("Range Test 1(xyzbla)", 12);
+        sdtx_putr("\nRange Test 2\n", 32);
+        sdtx_move_y(2);
+    }
+    sg_begin_pass(&(sg_pass){ .action = state.pass_action, .swapchain = sglue_swapchain() });
+    sdtx_draw();
+    __cdbgui_draw();
+    sg_end_pass();
+    sg_commit();
+    if(jit_request_close) sapp_quit();
+
+}
+
+static void cleanup(void) {
+    sdtx_shutdown();
+    __cdbgui_shutdown();
+    sg_shutdown();
+}
+
+int main(int argc, char *argv[]) {
+    sapp_run(&(sapp_desc) {
+        .init_cb = init,
+        .frame_cb = frame,
+        .cleanup_cb = cleanup,
+        .event_cb = __cdbgui_event,
+        .width = 640,
+        .height = 480,
+        .swap_interval = 1,
+        .window_title = "debugtext-printf-sapp",
+        .icon.sokol_default = true,
+        .logger.func = slog_func,
+    });
+    #ifndef HAS_ASYNC_LOOP
+    sapp_quit();
+    #endif
+    return 0;
+
+}
+

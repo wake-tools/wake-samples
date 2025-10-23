@@ -1,0 +1,340 @@
+/* SPDX-License-Identifier: Zlib
+|-------------------------------------------------------------------------------------------------------->>
+| https://wake.tools - [imageblur-sapp.c] - JIT C Runtime - C99+ (extensions)
+|-------------------------------------------------------------------------------------------------------->>
+| Adapted from the Sokol samples by Andreas 'floooh' (zlib/libpng License)
+| Converted to JIT (.jc) - zero build time - live execution - safe memory (bound checking) - GDB-ready
+| Original: https://github.com/floooh/sokol-samples/blob/master/sapp/imageblur-sapp.c
+|-------------------------------------------------------------------------------------------------------->>
+| run: wake imageblur-sapp.jc
+|-------------------------------------------------------------------------------------------------------->>
+| WAKE-LANG (Wake-Lang Executable Metadata - parsed by Wake - targets: w32, w64 [Windows 32/64-bit])
+|-------------------------------------------------------------------------------------------------------->>
+	<:jit:w32|w64>
+		#Jit.add .sm/imageblur-sapp.sm
+		>
+		|#Jit.depends imageblur-sapp.glsl
+		>
+		|{wk.module.hsys.r}wake-tools/shdc-v0.1w/sokol-shdc.exe --input imageblur-sapp.glsl --output .sm/imageblur-sapp.glslh --slang hlsl5 -b
+		>
+		{wk.module.sys.r}wake-tools/tcc-v0.1w/tcc
+			-xc -shared {this.file}
+
+			-b -l.{build.sys.r}.wake-tools--tcc.bcheck-atom-v0.1w
+			-Werror
+			-bench
+			-v
+
+			-L {wk.libs}
+				-l.{build.sys}.wake-tools--sokol-ig-v0.1w    -I {wk.include}wake-tools/sokol-v0.1w
+				-l.{build.sys}.wake-tools--imgui-v0.1w       -I {wk.include}wake-tools/imgui-v0.1w
+				-l.{build.sys}.wake-tools--jit-v0.1w         -I {wk.include}wake-tools/jit-v0.1w
+				-l.{build.sys}.wake-tools--sapp-v0.1w        -I {wk.include}wake-tools/sapp-v0.1w
+				-l.{build.sys}.wake-tools--sgfx-v0.1w        -I {wk.include}wake-tools/sgfx-v0.1w
+
+			-l msvcrt -l shell32 -l dwmapi -l user32
+
+		-o {jit.file}
+		>
+		#Jit.reload
+	<:/jit:>
+|-------------------------------------------------------------------------------------------------------->>
+*/
+//------------------------------------------------------------------------------
+//  imageblur-sapp.c
+//
+//  Image-blur running in a compute shader writing to a storage texture. Also
+//  demonstrates using shader-shared memory and shader barriers.
+//
+//  Ported from WebGPU sample: https://webgpu.github.io/webgpu-samples/?sample=imageBlur
+//------------------------------------------------------------------------------
+#include <jit.h>
+
+#define USE_DBG_UI
+#include <sokol.h>
+
+#include "sokol_log.h"
+#include "sokol_fetch.h"
+#include "cimgui.h"
+#include "sokol_imgui.h"
+#include "sokol_gfx_imgui.h"
+#include "stb/stb_image.h"
+#define FILEUTIL_BASEPATH "data/"
+#include "util/fileutil.h"
+#include ".sm/imageblur-sapp.glslh"
+#include <math.h> // ceilf()
+
+static struct {
+    int src_width;
+    int src_height;
+    sg_sampler smp;
+    struct {
+        sg_pipeline pip;
+        sg_image src_image;
+        sg_view src_tex_view;
+        sg_image storage_image[2];
+        sg_view storage_simg_views[2];
+        sg_view storage_tex_views[2];
+    } compute;
+    struct {
+        sg_pipeline pip;
+        sg_pass_action pass_action;
+    } display;
+    struct {
+        int filter_size;
+        int iterations;
+    } ui;
+    struct {
+        bool succeeded;
+        bool failed;
+    } io;
+} state = {
+    .display.pass_action = {
+        .colors[0] = { .load_action = SG_LOADACTION_CLEAR, .clear_value = { 0.0f, 0.0f, 0.0f, 0.5f } },
+    },
+    .ui = {
+        .filter_size = 1,
+        .iterations = 2,
+    },
+};
+static sgimgui_t sgimgui;
+static uint8_t file_buffer[256 * 1024];
+
+static void blur(int flip, sg_view dst_simg_view, sg_view src_tex_view);
+static void fetch_callback(const sfetch_response_t* response);
+static void draw_ui(void);
+
+static void init(void) {
+    sg_setup(&(sg_desc){
+        .environment = sglue_environment(),
+        .logger.func = slog_func,
+    });
+    sgimgui_init(&sgimgui, &(sgimgui_desc_t){0});
+    simgui_setup(&(simgui_desc_t){
+        .logger.func = slog_func,
+    });
+    sfetch_setup(&(sfetch_desc_t){
+        .max_requests = 1,
+        .num_channels = 1,
+        .num_lanes = 1,
+        .logger.func = slog_func,
+    });
+
+    // create a non-filtering sampler
+    state.smp = sg_make_sampler(&(sg_sampler_desc){
+        .min_filter = SG_FILTER_NEAREST,
+        .mag_filter = SG_FILTER_NEAREST,
+        .wrap_u = SG_WRAP_CLAMP_TO_EDGE,
+        .wrap_v = SG_WRAP_CLAMP_TO_EDGE,
+        .label = "nearest-sampler",
+    });
+
+    // start loading source png file asynchronously, all sokol-gfx image
+    // and attachemnts objects will be created when loading has finished
+    static char path_buf[512];
+    sfetch_send(&(sfetch_request_t){
+        .path = fileutil_get_path("baboon.png", path_buf, sizeof(path_buf)),
+        .callback = fetch_callback,
+        .buffer = SFETCH_RANGE(file_buffer),
+    });
+
+    // create compute shader and pipeline
+    state.compute.pip = sg_make_pipeline(&(sg_pipeline_desc){
+        .compute = true,
+        .shader = sg_make_shader(compute_shader_desc(sg_query_backend())),
+        .label = "compute-pipeline",
+    });
+
+    // a shader and pipeline to display the result (we'll
+    // synthesize the fullscreen vertices in the vertex shader so we
+    // don't need any buffers or a pipeline vertex layout, and default
+    // render state is fine for rendering a 2D triangle
+    state.display.pip = sg_make_pipeline(&(sg_pipeline_desc){
+        .shader = sg_make_shader(display_shader_desc(sg_query_backend())),
+        .label = "display-pipeline",
+    });
+}
+
+static void frame(void) {
+    sfetch_dowork();
+    draw_ui();
+
+    // if loading hasn't finished yet or has failed, just draw a fallback ui
+    if (!state.io.succeeded) {
+        sg_begin_pass(&(sg_pass){ .action = state.display.pass_action, .swapchain = sglue_swapchain() });
+        simgui_render();
+        sg_end_pass();
+        sg_commit();
+    if(jit_request_close) sapp_quit();
+        return;
+    }
+
+    // ping-pong blur passes starting with the source image
+    sg_begin_pass(&(sg_pass){ .compute = true, .label = "blur-pass"});
+    sg_apply_pipeline(state.compute.pip);
+    blur(0, state.compute.storage_simg_views[0], state.compute.src_tex_view);
+    blur(1, state.compute.storage_simg_views[1], state.compute.storage_tex_views[0]);
+    for (int i = 0; i < state.ui.iterations - 1; i++) {
+        blur(0, state.compute.storage_simg_views[0], state.compute.storage_tex_views[1]);
+        blur(1, state.compute.storage_simg_views[1], state.compute.storage_tex_views[0]);
+    }
+    sg_end_pass();
+
+    // swapchain render pass to display the result
+    sg_begin_pass(&(sg_pass){ .action = state.display.pass_action, .swapchain = sglue_swapchain(), .label = "display-pass" });
+    sg_apply_pipeline(state.display.pip);
+    sg_apply_bindings(&(sg_bindings){
+        .views[VIEW_disp_tex] = state.compute.storage_tex_views[1],
+        .samplers[SMP_disp_smp] = state.smp,
+    });
+    sg_draw(0, 3, 1);
+    simgui_render();
+    sg_end_pass();
+    sg_commit();
+    if(jit_request_close) sapp_quit();
+}
+
+static void cleanup(void) {
+    sfetch_shutdown();
+    sgimgui_discard(&sgimgui);
+    simgui_shutdown();
+    sg_shutdown();
+}
+
+static void input(const sapp_event* ev) {
+    simgui_handle_event(ev);
+}
+
+// perform a horizontal or vertical blur pass in a compute shader
+void blur(int flip, sg_view dst_simg_view, sg_view src_tex_view) {
+    const int batch = 4;        // must match shader
+    const int tile_dim = 128;   // must match shader
+    const int filter_size = state.ui.filter_size | 1;   // must be odd
+    const cs_params_t cs_params = {
+        .flip = flip,
+        .filter_dim = filter_size,
+        .block_dim = tile_dim - (filter_size - 1),
+    };
+    const float src_width = flip ? state.src_height : state.src_width;
+    const float src_height = flip ? state.src_width : state.src_height;
+    const int num_workgroups_x = (int)ceilf(src_width / (float)cs_params.block_dim);
+    const int num_workgroups_y = (int)ceilf(src_height / (float)batch);
+
+    sg_apply_bindings(&(sg_bindings){
+        .views[VIEW_cs_inp_tex] = src_tex_view,
+        .views[VIEW_cs_outp_tex] = dst_simg_view,
+        .samplers[SMP_cs_smp] = state.smp,
+    });
+    sg_apply_uniforms(UB_cs_params, &SG_RANGE(cs_params));
+    sg_dispatch(num_workgroups_x, num_workgroups_y, 1);
+}
+
+// called when texture file has finished loading, this creates a
+// regular image object with the source pixels, and a storage attachment
+// image object which will be written by the compute shader
+static void fetch_callback(const sfetch_response_t* response) {
+    if (response->fetched) {
+        int num_channels;
+        const int desired_channels = 4;
+        stbi_uc* pixels = stbi_load_from_memory(
+            response->data.ptr,
+            (int)response->data.size,
+            &state.src_width, &state.src_height,
+            &num_channels, desired_channels
+        );
+        if (pixels) {
+            // the source image is a regular texture
+            state.compute.src_image = sg_make_image(&(sg_image_desc){
+                .width = state.src_width,
+                .height = state.src_height,
+                .pixel_format = SG_PIXELFORMAT_RGBA8,
+                .data.mip_levels[0] = {
+                    .ptr = pixels,
+                    .size = (size_t)(state.src_width * state.src_height * 4),
+                },
+                .label = "source-image",
+            });
+            state.compute.src_tex_view = sg_make_view(&(sg_view_desc){
+                .texture = { .image = state.compute.src_image },
+                .label = "source-image-texture-view",
+            });
+            // create two storage textures for the 2-pass blur, and associated storage-image-views and one texture-views
+            const char* img_labels[2] = { "storage-image-0", "storage-image-1" };
+            const char* tex_view_labels[2] = { "storage-image-tex-view-0", "storage-image-tex-view-1" };
+            const char* att_view_labels[2] = { "storage-image-att-view-0", "storage-image-att-view-1" };
+            for (int i = 0; i < 2; i++) {
+                state.compute.storage_image[i] = sg_make_image(&(sg_image_desc){
+                    .usage.storage_image = true,
+                    .width = state.src_width,
+                    .height = state.src_height,
+                    .pixel_format = SG_PIXELFORMAT_RGBA8,
+                    .label = img_labels[i],
+                });
+                state.compute.storage_tex_views[i] = sg_make_view(&(sg_view_desc){
+                    .texture = { .image = state.compute.storage_image[i] },
+                    .label = tex_view_labels[i],
+                });
+                state.compute.storage_simg_views[i] = sg_make_view(&(sg_view_desc){
+                    .storage_image = { .image = state.compute.storage_image[i] },
+                    .label = att_view_labels[i],
+                });
+            }
+            state.io.succeeded = true;
+        }
+    } else if (response->failed) {
+        state.io.failed = true;
+    }
+}
+
+static void draw_ui(void) {
+    simgui_new_frame(&(simgui_frame_desc_t){
+        .width = sapp_width(),
+        .height = sapp_height(),
+        .delta_time = sapp_frame_duration(),
+        .dpi_scale = sapp_dpi_scale(),
+    });
+    if (igBeginMainMenuBar()) {
+        sgimgui_draw_menu(&sgimgui, "sokol-gfx");
+        igEndMainMenuBar();
+    }
+    igSetNextWindowBgAlpha(0.8f);
+    igSetNextWindowPos((ImVec2){10,30}, ImGuiCond_Once);
+    const ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoDecoration |
+        ImGuiWindowFlags_AlwaysAutoResize |
+        ImGuiWindowFlags_NoBringToFrontOnFocus |
+        ImGuiWindowFlags_NoFocusOnAppearing;
+    if (igBegin("controls", 0, flags)) {
+        if (!state.io.succeeded && !state.io.failed) {
+            igText("Loading...");
+        } else if (state.io.failed) {
+            igText("Failed to load source texture!");
+        } else {
+            igSliderInt("Filter Size", &state.ui.filter_size, 1, 33);
+            igSliderInt("Iterations", &state.ui.iterations, 1, 10);
+        }
+    }
+    igEnd();
+    sgimgui_draw(&sgimgui);
+}
+
+int main(int argc, char *argv[]) {
+    sapp_run(&(sapp_desc){
+        .init_cb = init,
+        .frame_cb = frame,
+        .cleanup_cb = cleanup,
+        .event_cb = input,
+        .width = 800,
+        .height = 600,
+        .swap_interval = 1,
+        .window_title = "imageblur-sapp.c",
+        .icon.sokol_default = true,
+        .logger.func = slog_func,
+    });
+    #ifndef HAS_ASYNC_LOOP
+    sapp_quit();
+    #endif
+    return 0;
+
+}
+

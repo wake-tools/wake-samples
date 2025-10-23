@@ -1,0 +1,99 @@
+/* SPDX-License-Identifier: Zlib
+|-------------------------------------------------------------------------------------------------------->>
+| https://wake.tools - [clear-sapp.c] - JIT C Runtime - C99+ (extensions)
+|-------------------------------------------------------------------------------------------------------->>
+| Adapted from the Sokol samples by Andreas 'floooh' (zlib/libpng License)
+| Converted to JIT (.jc) - zero build time - live execution - safe memory (bound checking) - GDB-ready
+| Original: https://github.com/floooh/sokol-samples/blob/master/sapp/clear-sapp.c
+|-------------------------------------------------------------------------------------------------------->>
+| run: wake clear-sapp.jc
+|-------------------------------------------------------------------------------------------------------->>
+| WAKE-LANG (Wake-Lang Executable Metadata - parsed by Wake - targets: w32, w64 [Windows 32/64-bit])
+|-------------------------------------------------------------------------------------------------------->>
+	<:jit:w32|w64>
+		#Jit.add .sm/clear-sapp.sm
+		>
+		{wk.module.sys.r}wake-tools/tcc-v0.1w/tcc
+			-xc -shared {this.file}
+
+			-b -l.{build.sys.r}.wake-tools--tcc.bcheck-atom-v0.1w
+			-Werror
+			-bench
+			-v
+
+			-L {wk.libs}
+				-l.{build.sys}.wake-tools--sokol-ig-v0.1w    -I {wk.include}wake-tools/sokol-v0.1w
+				-l.{build.sys}.wake-tools--imgui-v0.1w       -I {wk.include}wake-tools/imgui-v0.1w
+				-l.{build.sys}.wake-tools--jit-v0.1w         -I {wk.include}wake-tools/jit-v0.1w
+				-l.{build.sys}.wake-tools--sapp-v0.1w        -I {wk.include}wake-tools/sapp-v0.1w
+				-l.{build.sys}.wake-tools--sgfx-v0.1w        -I {wk.include}wake-tools/sgfx-v0.1w
+
+			-l msvcrt -l shell32 -l dwmapi -l user32
+
+		-o {jit.file}
+		>
+		#Jit.reload
+	<:/jit:>
+|-------------------------------------------------------------------------------------------------------->>
+*/
+//------------------------------------------------------------------------------
+//  clear-sapp.c
+//------------------------------------------------------------------------------
+#include <jit.h>
+
+#define USE_DBG_UI
+#include <sokol.h>
+
+#include "sokol_log.h"
+
+sg_pass_action pass_action;
+
+static void init(void) {
+    sg_setup(&(sg_desc){
+        .environment = sglue_environment(),
+        .logger.func = slog_func,
+    });
+    pass_action = (sg_pass_action) {
+        .colors[0] = {
+            .load_action = SG_LOADACTION_CLEAR,
+            .clear_value = { 1.0f, 0.0f, 0.0f, 1.0f }
+        }
+    };
+    __cdbgui_setup(sapp_sample_count());
+}
+
+static void frame(void) {
+    float g = pass_action.colors[0].clear_value.g + 0.01f;
+    pass_action.colors[0].clear_value.g = (g > 1.0f) ? 0.0f : g;
+    sg_begin_pass(&(sg_pass){ .action = pass_action, .swapchain = sglue_swapchain() });
+    __cdbgui_draw();
+    sg_end_pass();
+    sg_commit();
+    if(jit_request_close) sapp_quit();
+}
+
+static void cleanup(void) {
+    __cdbgui_shutdown();
+    sg_shutdown();
+}
+
+int main(int argc, char *argv[]) {
+    sapp_run(&(sapp_desc){
+        .init_cb = init,
+        .frame_cb = frame,
+        .cleanup_cb = cleanup,
+        .event_cb = __cdbgui_event,
+        .width = 400,
+        .height = 300,
+        .swap_interval = 1,
+        .window_title = "Clear (sokol app)",
+        .icon.sokol_default = true,
+        .logger.func = slog_func,
+    });
+    #ifndef HAS_ASYNC_LOOP
+    sapp_quit();
+    #endif
+    return 0;
+
+}
+

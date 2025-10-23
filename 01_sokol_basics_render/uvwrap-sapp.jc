@@ -1,0 +1,187 @@
+/* SPDX-License-Identifier: Zlib
+|-------------------------------------------------------------------------------------------------------->>
+| https://wake.tools - [uvwrap-sapp.c] - JIT C Runtime - C99+ (extensions)
+|-------------------------------------------------------------------------------------------------------->>
+| Adapted from the Sokol samples by Andreas 'floooh' (zlib/libpng License)
+| Converted to JIT (.jc) - zero build time - live execution - safe memory (bound checking) - GDB-ready
+| Original: https://github.com/floooh/sokol-samples/blob/master/sapp/uvwrap-sapp.c
+|-------------------------------------------------------------------------------------------------------->>
+| run: wake uvwrap-sapp.jc
+|-------------------------------------------------------------------------------------------------------->>
+| WAKE-LANG (Wake-Lang Executable Metadata - parsed by Wake - targets: w32, w64 [Windows 32/64-bit])
+|-------------------------------------------------------------------------------------------------------->>
+	<:jit:w32|w64>
+		#Jit.add .sm/uvwrap-sapp.sm
+		>
+		|#Jit.depends uvwrap-sapp.glsl
+		>
+		|{wk.module.hsys.r}wake-tools/shdc-v0.1w/sokol-shdc.exe --input uvwrap-sapp.glsl --output .sm/uvwrap-sapp.glslh --slang hlsl4 -b
+		>
+		{wk.module.sys.r}wake-tools/tcc-v0.1w/tcc
+			-xc -shared {this.file}
+
+			-b -l.{build.sys.r}.wake-tools--tcc.bcheck-atom-v0.1w
+			-Werror
+			-bench
+			-v
+
+			-L {wk.libs}
+				-l.{build.sys}.wake-tools--sokol-ig-v0.1w    -I {wk.include}wake-tools/sokol-v0.1w
+				-l.{build.sys}.wake-tools--imgui-v0.1w       -I {wk.include}wake-tools/imgui-v0.1w
+				-l.{build.sys}.wake-tools--jit-v0.1w         -I {wk.include}wake-tools/jit-v0.1w
+				-l.{build.sys}.wake-tools--sapp-v0.1w        -I {wk.include}wake-tools/sapp-v0.1w
+				-l.{build.sys}.wake-tools--sgfx-v0.1w        -I {wk.include}wake-tools/sgfx-v0.1w
+
+			-l msvcrt -l shell32 -l dwmapi -l user32
+
+		-o {jit.file}
+		>
+		#Jit.reload
+	<:/jit:>
+|-------------------------------------------------------------------------------------------------------->>
+*/
+//------------------------------------------------------------------------------
+//  uvwrap-sapp.c
+//  Demonstrates and tests texture coordinate wrapping modes.
+//------------------------------------------------------------------------------
+#include <jit.h>
+
+#define USE_DBG_UI
+#include <sokol.h>
+
+#include "sokol_log.h"
+#include ".sm/uvwrap-sapp.glslh"
+
+static struct {
+    sg_buffer vbuf;
+    sg_view tex_view;
+    sg_sampler smp[_SG_WRAP_NUM];
+    sg_pipeline pip;
+    sg_pass_action pass_action;
+} state;
+
+static void init(void) {
+    sg_setup(&(sg_desc){
+        .environment = sglue_environment(),
+        .logger.func = slog_func,
+    });
+    __cdbgui_setup(sapp_sample_count());
+
+    // a quad vertex buffer
+    const float quad_vertices[] = {
+        -1.0f, +1.0f,
+        +1.0f, +1.0f,
+        -1.0f, -1.0f,
+        +1.0f, -1.0f,
+    };
+    state.vbuf = sg_make_buffer(&(sg_buffer_desc){
+        .data = SG_RANGE(quad_vertices)
+    });
+
+    // a test image and texture view
+    const uint32_t o = 0xFF555555;
+    const uint32_t W = 0xFFFFFFFF;
+    const uint32_t R = 0xFF0000FF;
+    const uint32_t G = 0xFF00FF00;
+    const uint32_t B = 0xFFFF0000;
+    const uint32_t test_pixels[8][8] = {
+        { R, R, R, R, G, G, G, G },
+        { R, o, o, o, o, o, o, G },
+        { R, o, o, o, o, o, o, G },
+        { R, o, o, W, W, o, o, G },
+        { B, o, o, W, W, o, o, R },
+        { B, o, o, o, o, o, o, R },
+        { B, o, o, o, o, o, o, R },
+        { B, B, B, B, R, R, R, R },
+    };
+    sg_image img = sg_make_image(&(sg_image_desc){
+        .width = 8,
+        .height = 8,
+        .data.mip_levels[0] = SG_RANGE(test_pixels)
+    });
+    state.tex_view = sg_make_view(&(sg_view_desc){
+        .texture = { .image = img },
+    });
+
+    // one sampler per uv wrap mode
+    for (int i = SG_WRAP_REPEAT; i <= SG_WRAP_MIRRORED_REPEAT; i++) {
+        state.smp[i] = sg_make_sampler(&(sg_sampler_desc){
+            .wrap_u = (sg_wrap) i,
+            .wrap_v = (sg_wrap) i,
+            .border_color = SG_BORDERCOLOR_OPAQUE_BLACK,
+        });
+    }
+
+    // a pipeline state object
+    state.pip = sg_make_pipeline(&(sg_pipeline_desc){
+        .shader = sg_make_shader(uvwrap_shader_desc(sg_query_backend())),
+        .layout = {
+            .attrs[ATTR_uvwrap_pos].format = SG_VERTEXFORMAT_FLOAT2
+        },
+        .primitive_type = SG_PRIMITIVETYPE_TRIANGLE_STRIP,
+        .depth = {
+            .compare = SG_COMPAREFUNC_LESS_EQUAL,
+            .write_enabled = true
+        },
+    });
+
+    // pass action to clear to a background color
+    state.pass_action = (sg_pass_action){
+        .colors[0] = { .load_action = SG_LOADACTION_CLEAR, .clear_value={0.0f, 0.5f, 0.7f, 1.0f } }
+    };
+}
+
+static void frame(void) {
+    sg_begin_pass(&(sg_pass){ .action = state.pass_action, .swapchain = sglue_swapchain() });
+    sg_apply_pipeline(state.pip);
+    for (int i = SG_WRAP_REPEAT; i <= SG_WRAP_MIRRORED_REPEAT; i++) {
+        sg_apply_bindings(&(sg_bindings){
+            .vertex_buffers[0] = state.vbuf,
+            .views[VIEW_tex] = state.tex_view,
+            .samplers[SMP_smp] = state.smp[i],
+        });
+        float x_offset = 0, y_offset = 0;
+        switch (i) {
+            case SG_WRAP_REPEAT:            x_offset = -0.5f; y_offset = 0.5f; break;
+            case SG_WRAP_CLAMP_TO_EDGE:     x_offset = +0.5f; y_offset = 0.5f; break;
+            case SG_WRAP_CLAMP_TO_BORDER:   x_offset = -0.5f; y_offset = -0.5f; break;
+            case SG_WRAP_MIRRORED_REPEAT:   x_offset = +0.5f; y_offset = -0.5f; break;
+        }
+        vs_params_t vs_params = {
+            .offset = { x_offset, y_offset },
+            .scale = { 0.4f, 0.4f }
+        };
+        sg_apply_uniforms(UB_vs_params, &SG_RANGE(vs_params));
+        sg_draw(0, 4, 1);
+    }
+    __cdbgui_draw();
+    sg_end_pass();
+    sg_commit();
+    if(jit_request_close) sapp_quit();
+}
+
+static void cleanup(void) {
+    __cdbgui_shutdown();
+    sg_shutdown();
+}
+
+int main(int argc, char *argv[]) {
+    sapp_run(&(sapp_desc){
+        .init_cb = init,
+        .frame_cb = frame,
+        .cleanup_cb = cleanup,
+        .event_cb = __cdbgui_event,
+        .width = 800,
+        .height = 600,
+        .swap_interval = 1,
+        .window_title = "UV Wrap Modes",
+        .icon.sokol_default = true,
+        .logger.func = slog_func,
+    });
+    #ifndef HAS_ASYNC_LOOP
+    sapp_quit();
+    #endif
+    return 0;
+
+}
+

@@ -1,0 +1,198 @@
+/* SPDX-License-Identifier: Zlib
+|-------------------------------------------------------------------------------------------------------->>
+| https://wake.tools - [uniformtypes-sapp.c] - JIT C Runtime - C99+ (extensions)
+|-------------------------------------------------------------------------------------------------------->>
+| Adapted from the Sokol samples by Andreas 'floooh' (zlib/libpng License)
+| Converted to JIT (.jc) - zero build time - live execution - safe memory (bound checking) - GDB-ready
+| Original: https://github.com/floooh/sokol-samples/blob/master/sapp/uniformtypes-sapp.c
+|-------------------------------------------------------------------------------------------------------->>
+| run: wake uniformtypes-sapp.jc
+|-------------------------------------------------------------------------------------------------------->>
+| WAKE-LANG (Wake-Lang Executable Metadata - parsed by Wake - targets: w32, w64 [Windows 32/64-bit])
+|-------------------------------------------------------------------------------------------------------->>
+	<:jit:w32|w64>
+		#Jit.add .sm/uniformtypes-sapp.sm
+		>
+		|#Jit.depends uniformtypes-sapp.glsl
+		>
+		|{wk.module.hsys.r}wake-tools/shdc-v0.1w/sokol-shdc.exe --input uniformtypes-sapp.glsl --output .sm/uniformtypes-sapp.glslh --slang hlsl4 -b
+		>
+		{wk.module.sys.r}wake-tools/tcc-v0.1w/tcc
+			-xc -shared {this.file}
+
+			-b -l.{build.sys.r}.wake-tools--tcc.bcheck-atom-v0.1w
+			-Werror
+			-bench
+			-v
+
+			-L {wk.libs}
+				-l.{build.sys}.wake-tools--sokol-ig-v0.1w    -I {wk.include}wake-tools/sokol-v0.1w
+				-l.{build.sys}.wake-tools--imgui-v0.1w       -I {wk.include}wake-tools/imgui-v0.1w
+				-l.{build.sys}.wake-tools--jit-v0.1w         -I {wk.include}wake-tools/jit-v0.1w
+				-l.{build.sys}.wake-tools--sapp-v0.1w        -I {wk.include}wake-tools/sapp-v0.1w
+				-l.{build.sys}.wake-tools--sgfx-v0.1w        -I {wk.include}wake-tools/sgfx-v0.1w
+
+			-l msvcrt -l shell32 -l dwmapi -l user32
+
+		-o {jit.file}
+		>
+		#Jit.reload
+	<:/jit:>
+|-------------------------------------------------------------------------------------------------------->>
+*/
+//------------------------------------------------------------------------------
+//  uniformtypes-sapp.c
+//  Test sokol-gfx uniform types and uniform block memory layout.
+//------------------------------------------------------------------------------
+#include <jit.h>
+
+#define USE_DBG_UI
+#include <sokol.h>
+
+#include "sokol_color.h"
+#include "sokol_log.h"
+#include ".sm/uniformtypes-sapp.glslh"
+#include "sokol_debugtext.h"
+
+static struct {
+    sg_pass_action pass_action;
+    sg_pipeline pip;
+    sg_bindings bind;
+    vs_params_t vs_params;
+} state;
+
+#define NUM_COLORS (10)
+static const sg_color pal[NUM_COLORS] = {
+    SG_RED, SG_GREEN, SG_BLUE, SG_YELLOW, SG_TURQUOISE,
+    SG_VIOLET, SG_SILVER, SG_SALMON, SG_PERU, SG_MAGENTA,
+};
+
+static const char* names[NUM_COLORS] = {
+    "RED", "GREEN", "BLUE", "YELLOW", "TURQOISE",
+    "VIOLET", "SILVER", "SALMON", "PERU", "MAGENTA"
+};
+
+static void init(void) {
+    sg_setup(&(sg_desc){
+        .environment = sglue_environment(),
+        .logger.func = slog_func,
+    });
+    sdtx_setup(&(sdtx_desc_t){
+        .context_pool_size = 1,
+        .fonts[0] = sdtx_font_oric(),
+        .logger.func = slog_func,
+    });
+    __cdbgui_setup(sapp_sample_count());
+
+    // setup vertex shader uniform block
+    state.vs_params.scale[0] = 1.0f;
+    state.vs_params.scale[1] = 1.0f;
+    state.vs_params.i1 = 0;
+    state.vs_params.i2[0] = 1;
+    state.vs_params.i2[1] = 2;
+    state.vs_params.i3[0] = 3;
+    state.vs_params.i3[1] = 4;
+    state.vs_params.i3[2] = 5;
+    state.vs_params.i4[0] = 6;
+    state.vs_params.i4[1] = 7;
+    state.vs_params.i4[2] = 8;
+    state.vs_params.i4[3] = 9;
+    for (int i = 0; i < NUM_COLORS; i++) {
+        state.vs_params.pal[i][0] = pal[i].r;
+        state.vs_params.pal[i][1] = pal[i].g;
+        state.vs_params.pal[i][2] = pal[i].b;
+        state.vs_params.pal[i][3] = 1.0;
+    }
+
+    // a quad vertex buffer, index buffer and pipeline object
+    const float vertices[] = {
+         0.0f,  0.0f,
+        +1.0f,  0.0f,
+        +1.0f, +1.0f,
+         0.0f, +1.0f,
+    };
+    const uint16_t indices[] = { 0, 1, 2,  0, 2, 3 };
+    state.bind.vertex_buffers[0] = sg_make_buffer(&(sg_buffer_desc){
+        .data = SG_RANGE(vertices)
+    });
+    state.bind.index_buffer = sg_make_buffer(&(sg_buffer_desc){
+        .usage.index_buffer = true,
+        .data = SG_RANGE(indices)
+    });
+    state.pip = sg_make_pipeline(&(sg_pipeline_desc){
+        .shader = sg_make_shader(uniformtypes_shader_desc(sg_query_backend())),
+        .layout.attrs[0].format = SG_VERTEXFORMAT_FLOAT2,
+        .index_type = SG_INDEXTYPE_UINT16,
+    });
+
+    // default pass action to clear background to black
+    state.pass_action = (sg_pass_action) {
+        .colors[0] = { .load_action = SG_LOADACTION_CLEAR, .clear_value = { 0.0f, 0.0f, 0.0f, 0.5f } }
+    };
+}
+
+static void frame(void) {
+    const float w = sapp_widthf();
+    const float h = sapp_heightf();
+    const float cw = w * 0.5f;
+    const float ch = h * 0.5f;
+    const float glyph_w = 8.0f / cw;
+    const float glyph_h = 8.0f / ch;
+
+    sdtx_canvas(w * 0.5f, h * 0.5f);
+    sdtx_origin(3, 3);
+    sdtx_color3f(1.0f, 1.0f, 1.0f);
+    sdtx_puts("Color names must match\nquad color on same line:\n\n\n");
+    for (int i = 0; i < NUM_COLORS; i++) {
+        sdtx_color3f(pal[i].r, pal[i].g, pal[i].b);
+        sdtx_puts(names[i]);
+        sdtx_crlf(); sdtx_crlf();
+    }
+
+    sg_begin_pass(&(sg_pass){ .action = state.pass_action, .swapchain = sglue_swapchain() });
+    sg_apply_pipeline(state.pip);
+    sg_apply_bindings(&state.bind);
+    float x0 = -1.0f + (28.0f * glyph_w);
+    float y0 = 1.0f - (16.0f * glyph_h);
+    state.vs_params.scale[0] = 5.0f * glyph_w;
+    state.vs_params.scale[1] = 2.0f * glyph_h;
+    for (int i = 0; i < NUM_COLORS; i++) {
+        state.vs_params.sel = i;
+        state.vs_params.offset[0] = x0;
+        state.vs_params.offset[1] = y0;
+        sg_apply_uniforms(UB_vs_params, &SG_RANGE(state.vs_params));
+        sg_draw(0, 6, 1);
+        y0 -= 4.0f * glyph_h;
+    }
+    sdtx_draw();
+    __cdbgui_draw();
+    sg_end_pass();
+    sg_commit();
+    if(jit_request_close) sapp_quit();
+}
+
+static void cleanup(void) {
+    __cdbgui_shutdown();
+    sg_shutdown();
+}
+
+int main(int argc, char *argv[]) {
+    sapp_run(&(sapp_desc){
+        .init_cb = init,
+        .frame_cb = frame,
+        .cleanup_cb = cleanup,
+        .event_cb = __cdbgui_event,
+        .width = 800,
+        .height = 600,
+        .swap_interval = 1,
+        .window_title = "Uniform Types",
+        .icon.sokol_default = true,
+        .logger.func = slog_func,
+    });
+    #ifndef HAS_ASYNC_LOOP
+    sapp_quit();
+    #endif
+    return 0;
+
+}
+

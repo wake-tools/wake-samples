@@ -1,0 +1,286 @@
+/* SPDX-License-Identifier: Zlib
+|-------------------------------------------------------------------------------------------------------->>
+| https://wake.tools - [sbuftex-sapp.c] - JIT C Runtime - C99+ (extensions)
+|-------------------------------------------------------------------------------------------------------->>
+| Adapted from the Sokol samples by Andreas 'floooh' (zlib/libpng License)
+| Converted to JIT (.jc) - zero build time - live execution - safe memory (bound checking) - GDB-ready
+| Original: https://github.com/floooh/sokol-samples/blob/master/sapp/sbuftex-sapp.c
+|-------------------------------------------------------------------------------------------------------->>
+| run: wake sbuftex-sapp.jc
+|-------------------------------------------------------------------------------------------------------->>
+| WAKE-LANG (Wake-Lang Executable Metadata - parsed by Wake - targets: w32, w64 [Windows 32/64-bit])
+|-------------------------------------------------------------------------------------------------------->>
+	<:jit:w32|w64>
+		#Jit.add .sm/sbuftex-sapp.sm
+		>
+		|#Jit.depends sbuftex-sapp.glsl
+		>
+		|{wk.module.hsys.r}wake-tools/shdc-v0.1w/sokol-shdc.exe --input sbuftex-sapp.glsl --output .sm/sbuftex-sapp.glslh --slang hlsl4 -b
+		>
+		{wk.module.sys.r}wake-tools/tcc-v0.1w/tcc
+			-xc -shared {this.file}
+
+			-b -l.{build.sys.r}.wake-tools--tcc.bcheck-atom-v0.1w
+			-Werror
+			-bench
+			-v
+
+			-L {wk.libs}
+				-l.{build.sys}.wake-tools--sokol-ig-v0.1w    -I {wk.include}wake-tools/sokol-v0.1w
+				-l.{build.sys}.wake-tools--imgui-v0.1w       -I {wk.include}wake-tools/imgui-v0.1w
+				-l.{build.sys}.wake-tools--jit-v0.1w         -I {wk.include}wake-tools/jit-v0.1w
+				-l.{build.sys}.wake-tools--sapp-v0.1w        -I {wk.include}wake-tools/sapp-v0.1w
+				-l.{build.sys}.wake-tools--sgfx-v0.1w        -I {wk.include}wake-tools/sgfx-v0.1w
+
+			-l msvcrt -l shell32 -l dwmapi -l user32
+
+		-o {jit.file}
+		>
+		#Jit.reload
+	<:/jit:>
+|-------------------------------------------------------------------------------------------------------->>
+*/
+//------------------------------------------------------------------------------
+//  sbuftex-sapp.c
+//
+//  Test whether binding texture and storage buffers to the same shader stage
+//  works.
+//
+//  The vertex shader pulls vertices and a color palette index from a storage
+//  buffer. The color palette index is passed to the fragment shader.
+//
+//  In the fragment shader, a color palette lookup is done via a storage buffer,
+//  and the resulting color is modulated by a texture.
+//------------------------------------------------------------------------------
+#include <jit.h>
+
+#define USE_DBG_UI
+#include <sokol.h>
+
+#include "sokol_log.h"
+#include "sokol_debugtext.h"
+#define VECMATH_GENERICS
+#include <jit/vecmath.h>
+#include ".sm/sbuftex-sapp.glslh"
+
+static struct {
+    float rx, ry;
+    sg_pass_action pass_action;
+    sg_pipeline pip;
+    sg_bindings bind;
+} state;
+
+static vs_params_t make_vs_params(void);
+static void draw_fallback(void);
+
+static void init(void) {
+    sg_setup(&(sg_desc){
+        .environment = sglue_environment(),
+        .logger.func = slog_func,
+    });
+    __cdbgui_setup(sapp_sample_count());
+
+    // if storage buffers are not supported on this platform, render
+    // a red screen and error message via sokol-debugtext
+    if (!sg_query_features().compute) {
+        sdtx_setup(&(sdtx_desc_t){ .fonts[0] = sdtx_font_cpc() });
+        return;
+    }
+
+    // otherwise clear to a regular color
+    state.pass_action = (sg_pass_action){
+        .colors[0] = { .load_action = SG_LOADACTION_CLEAR, .clear_value = { 0.5f, 0.75f, 0.25f } },
+    };
+
+    // a storage buffer with cube vertices and a storage buffer view
+    sb_vertex_t vertices[] = {
+        { .pos = { -1.0f, -1.0f, -1.0f },  .idx = 0, .uv = { 0.0f, 0.0f } },
+        { .pos = {  1.0f, -1.0f, -1.0f },  .idx = 0, .uv = { 1.0f, 0.0f } },
+        { .pos = {  1.0f,  1.0f, -1.0f },  .idx = 0, .uv = { 1.0f, 1.0f } },
+        { .pos = { -1.0f,  1.0f, -1.0f },  .idx = 0, .uv = { 0.0f, 1.0f } },
+
+        { .pos = { -1.0f, -1.0f,  1.0f },  .idx = 1, .uv = { 0.0f, 0.0f } },
+        { .pos = {  1.0f, -1.0f,  1.0f },  .idx = 1, .uv = { 1.0f, 0.0f } },
+        { .pos = {  1.0f,  1.0f,  1.0f },  .idx = 1, .uv = { 1.0f, 1.0f } },
+        { .pos = { -1.0f,  1.0f,  1.0f },  .idx = 1, .uv = { 0.0f, 1.0f } },
+
+        { .pos = { -1.0f, -1.0f, -1.0f },  .idx = 2, .uv = { 0.0f, 0.0f } },
+        { .pos = { -1.0f,  1.0f, -1.0f },  .idx = 2, .uv = { 1.0f, 0.0f } },
+        { .pos = { -1.0f,  1.0f,  1.0f },  .idx = 2, .uv = { 1.0f, 1.0f } },
+        { .pos = { -1.0f, -1.0f,  1.0f },  .idx = 2, .uv = { 0.0f, 1.0f } },
+
+        { .pos = {  1.0f, -1.0f, -1.0f },  .idx = 3, .uv = { 0.0f, 0.0f } },
+        { .pos = {  1.0f,  1.0f, -1.0f },  .idx = 3, .uv = { 1.0f, 0.0f } },
+        { .pos = {  1.0f,  1.0f,  1.0f },  .idx = 3, .uv = { 1.0f, 1.0f } },
+        { .pos = {  1.0f, -1.0f,  1.0f },  .idx = 3, .uv = { 0.0f, 1.0f } },
+
+        { .pos = { -1.0f, -1.0f, -1.0f },  .idx = 4, .uv = { 0.0f, 0.0f } },
+        { .pos = { -1.0f, -1.0f,  1.0f },  .idx = 4, .uv = { 1.0f, 0.0f } },
+        { .pos = {  1.0f, -1.0f,  1.0f },  .idx = 4, .uv = { 1.0f, 1.0f } },
+        { .pos = {  1.0f, -1.0f, -1.0f },  .idx = 4, .uv = { 0.0f, 1.0f } },
+
+        { .pos = { -1.0f,  1.0f, -1.0f },  .idx = 5, .uv = { 0.0f, 0.0f } },
+        { .pos = { -1.0f,  1.0f,  1.0f },  .idx = 5, .uv = { 1.0f, 0.0f } },
+        { .pos = {  1.0f,  1.0f,  1.0f },  .idx = 5, .uv = { 1.0f, 1.0f } },
+        { .pos = {  1.0f,  1.0f, -1.0f },  .idx = 5, .uv = { 0.0f, 1.0f } },
+    };
+    const sg_buffer vbuf = sg_make_buffer(&(sg_buffer_desc){
+        .usage.storage_buffer = true,
+        .data = SG_RANGE(vertices),
+        .label = "cube-vertex-buffer",
+    });
+    state.bind.views[VIEW_vertices] = sg_make_view(&(sg_view_desc){
+        .storage_buffer = { .buffer = vbuf },
+        .label = "cube-vertex-view",
+    });
+
+    // an index buffer with the cube indices
+    uint16_t indices[] = {
+        0, 1, 2,  0, 2, 3,
+        6, 5, 4,  7, 6, 4,
+        8, 9, 10,  8, 10, 11,
+        14, 13, 12,  15, 14, 12,
+        16, 17, 18,  16, 18, 19,
+        22, 21, 20,  23, 22, 20
+    };
+    state.bind.index_buffer = sg_make_buffer(&(sg_buffer_desc){
+        .usage.index_buffer = true,
+        .data = SG_RANGE(indices),
+        .label = "cube-indices",
+    });
+
+    // a storage buffer with a color palette
+    sb_color_t colors[] = {
+        { .color = { 1.0f, 0.0f, 0.0f, 1.0f } },
+        { .color = { 0.0f, 1.0f, 0.0f, 1.0f } },
+        { .color = { 0.0f, 0.0f, 1.0f, 1.0f } },
+        { .color = { 0.5f, 0.0f, 1.0f, 1.0f } },
+        { .color = { 0.0f, 0.5f, 1.0f, 1.0f } },
+        { .color = { 1.0f, 0.5f, 0.0f, 1.0f } },
+    };
+    const sg_buffer cbuf = sg_make_buffer(&(sg_buffer_desc){
+        .usage.storage_buffer = true,
+        .data = SG_RANGE(colors),
+        .label = "color-palette-buffer",
+    });
+    state.bind.views[VIEW_colors] = sg_make_view(&(sg_view_desc){
+        .storage_buffer = { .buffer = cbuf },
+        .label = "color-palette-view",
+    });
+
+    // a greyscale texture and texture view which modulates the color palette colors
+    uint8_t pixels[4][4] = {
+        { 0xFF, 0xCC, 0x88, 0x44 },
+        { 0xCC, 0x88, 0x44, 0xFF },
+        { 0x88, 0x44, 0xFF, 0xCC },
+        { 0x44, 0xFF, 0xCC, 0x88 },
+    };
+    sg_image img = sg_make_image(&(sg_image_desc){
+        .width = 4,
+        .height = 4,
+        .pixel_format = SG_PIXELFORMAT_R8,
+        .data.mip_levels[0] = SG_RANGE(pixels),
+        .label = "texture",
+    });
+    state.bind.views[VIEW_tex] = sg_make_view(&(sg_view_desc){
+        .texture = { .image = img },
+        .label = "texture-view",
+    });
+
+    // ...and a matching sampler
+    state.bind.samplers[SMP_smp] = sg_make_sampler(&(sg_sampler_desc){
+        .min_filter = SG_FILTER_NEAREST,
+        .mag_filter = SG_FILTER_NEAREST,
+        .label = "sampler",
+    });
+
+    // ...shader and pipeline object (note: no vertex layout needed because
+    // the vertex shader pulls vertices from storage buffer)
+    const sg_shader shd = sg_make_shader(sbuftex_shader_desc(sg_query_backend()));
+    state.pip = sg_make_pipeline(&(sg_pipeline_desc){
+        .shader = shd,
+        .index_type = SG_INDEXTYPE_UINT16,
+        .cull_mode = SG_CULLMODE_BACK,
+        .depth = {
+            .compare = SG_COMPAREFUNC_LESS_EQUAL,
+            .write_enabled = true,
+        },
+        .label = "pipeline",
+    });
+}
+
+static void frame(void) {
+    if (!sg_query_features().compute) {
+        draw_fallback();
+        return;
+    }
+    const vs_params_t vs_params = make_vs_params();
+    sg_begin_pass(&(sg_pass){ .action = state.pass_action, .swapchain = sglue_swapchain() });
+    sg_apply_pipeline(state.pip);
+    sg_apply_bindings(&state.bind);
+    sg_apply_uniforms(UB_vs_params, &SG_RANGE(vs_params));
+    sg_draw(0, 36, 1);
+    __cdbgui_draw();
+    sg_end_pass();
+    sg_commit();
+    if(jit_request_close) sapp_quit();
+}
+
+static vs_params_t make_vs_params(void) {
+    const float t = (float)(sapp_frame_duration() * 60.0);
+    const mat44_t proj = mat44_perspective_fov_rh(vm_radians(60.0f), sapp_widthf()/sapp_heightf(), 0.01f, 10.0f);
+    const mat44_t view = mat44_look_at_rh(vec3(0.0f, 1.5f, 4.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
+    const mat44_t view_proj = vm_mul(view, proj);
+    state.rx += 1.0f * t; state.ry += 2.0f * t;
+    const mat44_t rxm = mat44_rotation_x(vm_radians(state.rx));
+    const mat44_t rym = mat44_rotation_y(vm_radians(state.ry));
+    const mat44_t model = vm_mul(rym, rxm);
+    return (vs_params_t){ .mvp = vm_mul(model, view_proj) };
+}
+
+static void draw_fallback(void) {
+    sdtx_canvas(sapp_widthf() * 0.5f, sapp_heightf() * 0.5f);
+    sdtx_pos(1, 1);
+    sdtx_puts("STORAGE BUFFERS NOT SUPPORTED");
+    sg_begin_pass(&(sg_pass){
+        .action.colors[0] = {
+            .load_action = SG_LOADACTION_CLEAR,
+            .clear_value = { 1, 0, 0, 1},
+        },
+        .swapchain = sglue_swapchain()
+    });
+    sdtx_draw();
+    sg_end_pass();
+    sg_commit();
+    if(jit_request_close) sapp_quit();
+}
+
+static void cleanup(void) {
+    __cdbgui_shutdown();
+    if (!sg_query_features().compute) {
+        sdtx_shutdown();
+    }
+    sg_shutdown();
+}
+
+int main(int argc, char *argv[]) {
+    sapp_run(&(sapp_desc){
+        .init_cb = init,
+        .frame_cb = frame,
+        .cleanup_cb = cleanup,
+        .event_cb = __cdbgui_event,
+        .width = 800,
+        .height = 600,
+        .sample_count = 4,
+        .swap_interval = 1,
+        .window_title = "sbuftex-sapp.c",
+        .icon.sokol_default = true,
+        .logger.func = slog_func,
+    });
+    #ifndef HAS_ASYNC_LOOP
+    sapp_quit();
+    #endif
+    return 0;
+
+}
+

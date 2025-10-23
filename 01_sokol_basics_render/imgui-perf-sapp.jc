@@ -1,0 +1,197 @@
+/* SPDX-License-Identifier: Zlib
+|-------------------------------------------------------------------------------------------------------->>
+| https://wake.tools - [imgui-perf-sapp.c] - JIT C Runtime - C99+ (extensions)
+|-------------------------------------------------------------------------------------------------------->>
+| Adapted from the Sokol samples by Andreas 'floooh' (zlib/libpng License)
+| Converted to JIT (.jc) - zero build time - live execution - safe memory (bound checking) - GDB-ready
+| Original: https://github.com/floooh/sokol-samples/blob/master/sapp/imgui-perf-sapp.c
+|-------------------------------------------------------------------------------------------------------->>
+| run: wake imgui-perf-sapp.jc
+|-------------------------------------------------------------------------------------------------------->>
+| WAKE-LANG (Wake-Lang Executable Metadata - parsed by Wake - targets: w32, w64 [Windows 32/64-bit])
+|-------------------------------------------------------------------------------------------------------->>
+	<:jit:w32|w64>
+		#Jit.add .sm/imgui-perf-sapp.sm
+		>
+		{wk.module.sys.r}wake-tools/tcc-v0.1w/tcc
+			-xc -shared {this.file}
+
+			-b -l.{build.sys.r}.wake-tools--tcc.bcheck-atom-v0.1w
+			-Werror
+			-bench
+			-v
+
+			-L {wk.libs}
+				-l.{build.sys}.wake-tools--sokol-ig-v0.1w    -I {wk.include}wake-tools/sokol-v0.1w
+				-l.{build.sys}.wake-tools--imgui-v0.1w       -I {wk.include}wake-tools/imgui-v0.1w
+				-l.{build.sys}.wake-tools--jit-v0.1w         -I {wk.include}wake-tools/jit-v0.1w
+				-l.{build.sys}.wake-tools--sapp-v0.1w        -I {wk.include}wake-tools/sapp-v0.1w
+				-l.{build.sys}.wake-tools--sgfx-v0.1w        -I {wk.include}wake-tools/sgfx-v0.1w
+
+			-l msvcrt -l shell32 -l dwmapi -l user32
+
+		-o {jit.file}
+		>
+		#Jit.reload
+	<:/jit:>
+|-------------------------------------------------------------------------------------------------------->>
+*/
+//------------------------------------------------------------------------------
+//  imguiperf-sapp.c
+//  Test performance of the sokol_imgui.h rendering backend with many
+//  windows.
+//------------------------------------------------------------------------------
+#include <jit.h>
+
+#define USE_DBG_UI
+#include <sokol.h>
+
+#include "sokol_time.h"
+#include "sokol_log.h"
+#include "cimgui.h"
+#include "sokol_imgui.h"
+
+#include <math.h> // sinf, cosf
+
+static const int max_windows = 128;
+
+static struct {
+    uint64_t last_time;
+    int num_windows;
+    double min_raw_frame_time;
+    double max_raw_frame_time;
+    double min_rounded_frame_time;
+    double max_rounded_frame_time;
+    float counter;
+    sg_pass_action pass_action;
+} state = {
+    .num_windows = 16,
+    .pass_action = {
+        .colors[0] = {
+            .load_action = SG_LOADACTION_CLEAR,
+            .clear_value = { 0.0f, 0.5f, 0.7f, 1.0f }
+        }
+    }
+};
+
+static void reset_minmax_frametimes(void) {
+    state.max_raw_frame_time = 0;
+    state.min_raw_frame_time = 1000.0;
+    state.max_rounded_frame_time = 0;
+    state.min_rounded_frame_time = 1000.0;
+}
+
+static void init(void) {
+    // setup sokol-gfx, sokol-time and sokol-imgui
+    sg_setup(&(sg_desc){
+        .environment = sglue_environment(),
+        .logger.func = slog_func,
+    });
+    stm_setup();
+    simgui_setup(&(simgui_desc_t){
+        .logger.func = slog_func,
+    });
+    reset_minmax_frametimes();
+}
+
+static void frame(void) {
+    const int width = sapp_width();
+    const int height = sapp_height();
+    const float fwidth = (float)width;
+    const float fheight = (float)height;
+    double raw_frame_time = stm_sec(stm_laptime(&state.last_time));
+    double rounded_frame_time = sapp_frame_duration();
+    if (raw_frame_time > 0) {
+        if (raw_frame_time < state.min_raw_frame_time) {
+            state.min_raw_frame_time = raw_frame_time;
+        }
+        if (raw_frame_time > state.max_raw_frame_time) {
+            state.max_raw_frame_time = raw_frame_time;
+        }
+    }
+    if (rounded_frame_time > 0) {
+        if (rounded_frame_time < state.min_rounded_frame_time) {
+            state.min_rounded_frame_time = rounded_frame_time;
+        }
+        if (rounded_frame_time > state.max_rounded_frame_time) {
+            state.max_rounded_frame_time = rounded_frame_time;
+        }
+    }
+
+    simgui_new_frame(&(simgui_frame_desc_t){
+        .width = width,
+        .height = height,
+        .delta_time = rounded_frame_time,
+        .dpi_scale = sapp_dpi_scale()
+    });
+
+    // controls window
+    igSetNextWindowPos((ImVec2){ 10, 10 }, ImGuiCond_Once);
+    igSetNextWindowSize((ImVec2){ 500, 0 }, ImGuiCond_Once);
+    igBegin("Controls", 0, ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoScrollbar);
+    igSliderInt("Num Windows", &state.num_windows, 1, max_windows);
+    igText("raw frame time:     %.3fms (min: %.3f, max: %.3f)",
+        raw_frame_time * 1000.0,
+        state.min_raw_frame_time * 1000.0,
+        state.max_raw_frame_time * 1000.0);
+    igText("rounded frame time: %.3fms (min: %.3f, max: %.3f)",
+        rounded_frame_time * 1000.0,
+        state.min_rounded_frame_time * 1000.0,
+        state.max_rounded_frame_time * 1000.0);
+    if (igButton("Reset min/max times")) {
+        reset_minmax_frametimes();
+    }
+    igEnd();
+
+    // test windows
+    state.counter += 1.0f;
+    for (int i = 0; i < state.num_windows; i++) {
+        const float t = state.counter + i * 2.0f;
+        const float r = (float)i / (float)max_windows;
+        const float x = fwidth * (0.5f + (r * 0.5f * 0.75f * sinf(t * 0.05f)));
+        const float y = fheight * (0.5f + (r * 0.5f * 0.75f * cosf(t * 0.05f)));
+        char name[64];
+        snprintf(name, sizeof(name), "Hello ImGui %d", i);
+        igSetNextWindowPos((ImVec2){x,y}, ImGuiCond_Always);
+        igSetNextWindowSize((ImVec2){100, 10}, ImGuiCond_Always);
+        igBegin(name, 0, ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoFocusOnAppearing);
+        igEnd();
+    }
+
+    // draw everything
+    sg_begin_pass(&(sg_pass){ .action = state.pass_action, .swapchain = sglue_swapchain() });
+    simgui_render();
+    sg_end_pass();
+    sg_commit();
+    if(jit_request_close) sapp_quit();
+}
+
+static void cleanup(void) {
+    simgui_shutdown();
+    sg_shutdown();
+}
+
+static void input(const sapp_event* ev) {
+    simgui_handle_event(ev);
+}
+
+int main(int argc, char *argv[]) {
+    sapp_run(&(sapp_desc) {
+        .init_cb = init,
+        .frame_cb = frame,
+        .cleanup_cb = cleanup,
+        .event_cb = input,
+        .width = 800,
+        .height = 600,
+        .swap_interval = 1,
+        .window_title = "imgui perftest",
+        .icon.sokol_default = true,
+        .logger.func = slog_func,
+    });
+    #ifndef HAS_ASYNC_LOOP
+    sapp_quit();
+    #endif
+    return 0;
+
+}
+

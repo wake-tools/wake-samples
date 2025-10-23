@@ -1,0 +1,266 @@
+/* SPDX-License-Identifier: Zlib
+|-------------------------------------------------------------------------------------------------------->>
+| https://wake.tools - [instancing-compute-sapp.c] - JIT C Runtime - C99+ (extensions)
+|-------------------------------------------------------------------------------------------------------->>
+| Adapted from the Sokol samples by Andreas 'floooh' (zlib/libpng License)
+| Converted to JIT (.jc) - zero build time - live execution - safe memory (bound checking) - GDB-ready
+| Original: https://github.com/floooh/sokol-samples/blob/master/sapp/instancing-compute-sapp.c
+|-------------------------------------------------------------------------------------------------------->>
+| run: wake instancing-compute-sapp.jc
+|-------------------------------------------------------------------------------------------------------->>
+| WAKE-LANG (Wake-Lang Executable Metadata - parsed by Wake - targets: w32, w64 [Windows 32/64-bit])
+|-------------------------------------------------------------------------------------------------------->>
+	<:jit:w32|w64>
+		#Jit.add .sm/instancing-compute-sapp.sm
+		>
+		|#Jit.depends instancing-compute-sapp.glsl
+		>
+		|{wk.module.hsys.r}wake-tools/shdc-v0.1w/sokol-shdc.exe --input instancing-compute-sapp.glsl --output .sm/instancing-compute-sapp.glslh --slang hlsl4 -b
+		>
+		{wk.module.sys.r}wake-tools/tcc-v0.1w/tcc
+			-xc -shared {this.file}
+
+			-b -l.{build.sys.r}.wake-tools--tcc.bcheck-atom-v0.1w
+			-Werror
+			-bench
+			-v
+
+			-L {wk.libs}
+				-l.{build.sys}.wake-tools--sokol-ig-v0.1w    -I {wk.include}wake-tools/sokol-v0.1w
+				-l.{build.sys}.wake-tools--imgui-v0.1w       -I {wk.include}wake-tools/imgui-v0.1w
+				-l.{build.sys}.wake-tools--jit-v0.1w         -I {wk.include}wake-tools/jit-v0.1w
+				-l.{build.sys}.wake-tools--sapp-v0.1w        -I {wk.include}wake-tools/sapp-v0.1w
+				-l.{build.sys}.wake-tools--sgfx-v0.1w        -I {wk.include}wake-tools/sgfx-v0.1w
+
+			-l msvcrt -l shell32 -l dwmapi -l user32
+
+		-o {jit.file}
+		>
+		#Jit.reload
+	<:/jit:>
+|-------------------------------------------------------------------------------------------------------->>
+*/
+//------------------------------------------------------------------------------
+//  instancing-compute-sapp.c
+//
+//  Same as instancing-sapp.c and instancing-pull-sapp.c, but compute the
+//  particle positions in a compute shader.
+//------------------------------------------------------------------------------
+#include <jit.h>
+
+#define USE_DBG_UI
+#include <sokol.h>
+
+#include "sokol_log.h"
+#define VECMATH_GENERICS
+#include <jit/vecmath.h>
+#include ".sm/instancing-compute-sapp.glslh"
+
+#define MAX_PARTICLES (512 * 1024)
+#define NUM_PARTICLES_EMITTED_PER_FRAME (10)
+
+static struct {
+    int num_particles;
+    float ry;
+    sg_buffer buf;
+    struct {
+        sg_view sbuf_view;
+        sg_pipeline pip;
+    } compute;
+    struct {
+        sg_buffer vbuf;
+        sg_buffer ibuf;
+        sg_pipeline pip;
+        sg_pass_action pass_action;
+    } display;
+} state = {
+    .display = {
+        .pass_action = {
+            .colors[0] = {
+                .load_action = SG_LOADACTION_CLEAR,
+                .clear_value = { 0.0f, 0.2f, 0.1f, 1.0f }
+            }
+        }
+    }
+};
+
+static vs_params_t compute_vsparams(float frame_time);
+
+static void init(void) {
+    sg_setup(&(sg_desc){
+        .environment = sglue_environment(),
+        .logger.func = slog_func,
+    });
+    __cdbgui_setup(sapp_sample_count());
+
+    // create an uninitialized storage buffer for the particle state,
+    // this will be initialized and updated by compute shaders and then
+    // used as vertex buffer to provide per-instance data
+    state.buf = sg_make_buffer(&(sg_buffer_desc){
+        .size = MAX_PARTICLES * sizeof(particle_t),
+        .usage = {
+            .vertex_buffer = true,
+            .storage_buffer = true,
+        },
+        .label = "particle-buffer",
+    });
+
+    // create a storage-buffer-view on the buffer
+    state.compute.sbuf_view = sg_make_view(&(sg_view_desc){
+        .storage_buffer = { .buffer = state.buf },
+        .label = "psrticle-buffer-view",
+    });
+
+    // a compute shader and pipeline object for updating particle positions
+    state.compute.pip = sg_make_pipeline(&(sg_pipeline_desc){
+        .compute = true,
+        .shader = sg_make_shader(update_shader_desc(sg_query_backend())),
+        .label = "update-pipeline",
+    });
+
+    // vertex and index buffer for the particle geometry
+    const float r = 0.05f;
+    const float vertices[] = {
+        // positions            colors
+        0.0f,   -r, 0.0f,       1.0f, 0.0f, 0.0f, 1.0f,
+           r, 0.0f, r,          0.0f, 1.0f, 0.0f, 1.0f,
+           r, 0.0f, -r,         0.0f, 0.0f, 1.0f, 1.0f,
+          -r, 0.0f, -r,         1.0f, 1.0f, 0.0f, 1.0f,
+          -r, 0.0f, r,          0.0f, 1.0f, 1.0f, 1.0f,
+        0.0f,    r, 0.0f,       1.0f, 0.0f, 1.0f, 1.0f
+    };
+    const uint16_t indices[] = {
+        0, 1, 2,    0, 2, 3,    0, 3, 4,    0, 4, 1,
+        5, 1, 2,    5, 2, 3,    5, 3, 4,    5, 4, 1
+    };
+    state.display.vbuf = sg_make_buffer(&(sg_buffer_desc){
+        .data = SG_RANGE(vertices),
+        .label = "geometry-vbuf",
+    });
+    state.display.ibuf = sg_make_buffer(&(sg_buffer_desc){
+        .usage.index_buffer = true,
+        .data = SG_RANGE(indices),
+        .label = "geometry-ibuf",
+    });
+
+    // shader and pipeline for rendering the particles, this uses
+    // the compute-updated storage buffer to provide the particle positions
+    state.display.pip = sg_make_pipeline(&(sg_pipeline_desc){
+        .shader = sg_make_shader(display_shader_desc(sg_query_backend())),
+        .layout = {
+            .buffers[1] = {
+                .step_func = SG_VERTEXSTEP_PER_INSTANCE,
+                .stride = sizeof(particle_t),
+            },
+            .attrs = {
+                [ATTR_display_pos] = { .format = SG_VERTEXFORMAT_FLOAT3 }, // position
+                [ATTR_display_color0] = { .format = SG_VERTEXFORMAT_FLOAT4 }, // color
+                [ATTR_display_inst_pos] = { .format = SG_VERTEXFORMAT_FLOAT4, .buffer_index = 1 }, // particle pos
+            },
+        },
+        .index_type = SG_INDEXTYPE_UINT16,
+        .depth = {
+            .compare = SG_COMPAREFUNC_LESS_EQUAL,
+            .write_enabled = true,
+        },
+        .cull_mode = SG_CULLMODE_BACK,
+        .label = "render-pipeline",
+    });
+
+    // one-time init of particle velocities in a compute shader
+    sg_pipeline pip = sg_make_pipeline(&(sg_pipeline_desc){
+        .compute = true,
+        .shader = sg_make_shader(init_shader_desc(sg_query_backend())),
+    });
+    sg_begin_pass(&(sg_pass){ .compute = true });
+    sg_apply_pipeline(pip);
+    sg_apply_bindings(&(sg_bindings){
+        .views[VIEW_cs_ssbo] = state.compute.sbuf_view,
+    });
+    sg_dispatch(MAX_PARTICLES / 64, 1, 1);
+    sg_end_pass();
+    sg_destroy_pipeline(pip);
+}
+
+static void frame(void) {
+    state.num_particles += NUM_PARTICLES_EMITTED_PER_FRAME;
+    if (state.num_particles > MAX_PARTICLES) {
+        state.num_particles = MAX_PARTICLES;
+    }
+    const float dt = (float)sapp_frame_duration();
+
+    // compute pass to update particle positions
+    const cs_params_t cs_params = {
+        .dt = dt,
+        .num_particles = state.num_particles,
+    };
+    sg_begin_pass(&(sg_pass){ .compute = true, .label = "compute-pass" });
+    sg_apply_pipeline(state.compute.pip);
+    sg_apply_bindings(&(sg_bindings){
+        .views[VIEW_cs_ssbo] = state.compute.sbuf_view,
+    });
+    sg_apply_uniforms(UB_cs_params, &SG_RANGE(cs_params));
+    sg_dispatch((state.num_particles+63)/64, 1, 1);
+    sg_end_pass();
+
+    // render pass to render the particles via hardware instancing,
+    // the per-instance positions are provided by the storage buffer
+    // bound as vertex buffer at slot 1
+    const vs_params_t vs_params = compute_vsparams(dt);
+    sg_begin_pass(&(sg_pass){
+        .action = state.display.pass_action,
+        .swapchain = sglue_swapchain(),
+        .label = "render-pass",
+    });
+    sg_apply_pipeline(state.display.pip);
+    sg_apply_bindings(&(sg_bindings){
+        .vertex_buffers = {
+            [0] = state.display.vbuf,
+            [1] = state.buf,
+        },
+        .index_buffer = state.display.ibuf,
+    });
+    sg_apply_uniforms(UB_vs_params, &SG_RANGE(vs_params));
+    sg_draw(0, 24, state.num_particles);
+    __cdbgui_draw();
+    sg_end_pass();
+    sg_commit();
+    if(jit_request_close) sapp_quit();
+}
+
+static void cleanup(void) {
+    __cdbgui_shutdown();
+    sg_shutdown();
+}
+
+static vs_params_t compute_vsparams(float frame_time) {
+    const mat44_t proj = mat44_perspective_fov_rh(vm_radians(60.0f), sapp_widthf()/sapp_heightf(), 0.01f, 50.0f);
+    const mat44_t view = mat44_look_at_rh(vec3(0.0f, 1.5f, 8.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
+    const mat44_t view_proj = vm_mul(view, proj);
+    state.ry += 60.0f * frame_time;
+    return (vs_params_t) {
+        .mvp = vm_mul(mat44_rotation_y(vm_radians(state.ry)), view_proj),
+    };
+}
+
+int main(int argc, char *argv[]) {
+    sapp_run(&(sapp_desc){
+        .init_cb = init,
+        .frame_cb = frame,
+        .cleanup_cb = cleanup,
+        .event_cb = __cdbgui_event,
+        .width = 800,
+        .height = 600,
+        .sample_count = 4,
+        .swap_interval = 1,
+        .window_title = "instancing-compute-sapp.c",
+        .icon.sokol_default = true,
+        .logger.func = slog_func,
+    });
+    #ifndef HAS_ASYNC_LOOP
+    sapp_quit();
+    #endif
+    return 0;
+
+}
+

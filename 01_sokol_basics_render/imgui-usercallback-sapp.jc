@@ -1,0 +1,382 @@
+/* SPDX-License-Identifier: Zlib
+|-------------------------------------------------------------------------------------------------------->>
+| https://wake.tools - [imgui-usercallback-sapp.c] - JIT C Runtime - C99+ (extensions)
+|-------------------------------------------------------------------------------------------------------->>
+| Adapted from the Sokol samples by Andreas 'floooh' (zlib/libpng License)
+| Converted to JIT (.jc) - zero build time - live execution - safe memory (bound checking) - GDB-ready
+| Original: https://github.com/floooh/sokol-samples/blob/master/sapp/imgui-usercallback-sapp.c
+|-------------------------------------------------------------------------------------------------------->>
+| run: wake imgui-usercallback-sapp.jc
+|-------------------------------------------------------------------------------------------------------->>
+| WAKE-LANG (Wake-Lang Executable Metadata - parsed by Wake - targets: w32, w64 [Windows 32/64-bit])
+|-------------------------------------------------------------------------------------------------------->>
+	<:jit:w32|w64>
+		#Jit.add .sm/imgui-usercallback-sapp.sm
+		>
+		|#Jit.depends imgui-usercallback-sapp.glsl
+		>
+		|{wk.module.hsys.r}wake-tools/shdc-v0.1w/sokol-shdc.exe --input imgui-usercallback-sapp.glsl --output .sm/imgui-usercallback-sapp.glslh --slang hlsl4 -b
+		>
+		{wk.module.sys.r}wake-tools/tcc-v0.1w/tcc
+			-xc -shared {this.file}
+
+			-b -l.{build.sys.r}.wake-tools--tcc.bcheck-atom-v0.1w
+			-Werror
+			-bench
+			-v
+
+			-L {wk.libs}
+				-l.{build.sys}.wake-tools--sokol-ig-v0.1w    -I {wk.include}wake-tools/sokol-v0.1w
+				-l.{build.sys}.wake-tools--imgui-v0.1w       -I {wk.include}wake-tools/imgui-v0.1w
+				-l.{build.sys}.wake-tools--jit-v0.1w         -I {wk.include}wake-tools/jit-v0.1w
+				-l.{build.sys}.wake-tools--sapp-v0.1w        -I {wk.include}wake-tools/sapp-v0.1w
+				-l.{build.sys}.wake-tools--sgfx-v0.1w        -I {wk.include}wake-tools/sgfx-v0.1w
+
+			-l msvcrt -l shell32 -l dwmapi -l user32
+
+		-o {jit.file}
+		>
+		#Jit.reload
+	<:/jit:>
+|-------------------------------------------------------------------------------------------------------->>
+*/
+//------------------------------------------------------------------------------
+//  imgui-usercallback-sapp.c
+//
+//  Demonstrate rendering inside an ImGui window with sokol-gfx and
+//  sokol-gl using ImGui's UserCallback command.
+//
+//  Uses cimgui instead of the ImGui C++ API (C vs C++ API is not relevant
+//  for the demonstrated feature).
+//------------------------------------------------------------------------------
+#include <jit.h>
+
+#define USE_DBG_UI
+#include <sokol.h>
+
+#include "sokol_log.h"
+#define VECMATH_GENERICS
+#include <jit/vecmath.h>
+#include "cimgui.h"
+#include "sokol_imgui.h"
+#include ".sm/imgui-usercallback-sapp.glslh"
+#include "sokol_gl.h"
+
+// global application state
+static struct {
+    sg_pass_action default_pass_action;
+    struct {
+        float rx, ry;
+        sg_pass_action pass_action;
+        sg_pipeline pip;
+        sg_bindings bind;
+    } scene1;
+    struct {
+        float r0, r1;
+        sgl_pipeline pip;
+    } scene2;
+} state;
+
+// vertices and indices for rendering a cube via sokol-gfx
+static float cube_vertices[] = {
+    -1.0, -1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
+     1.0, -1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
+     1.0,  1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
+    -1.0,  1.0, -1.0,   1.0, 0.0, 0.0, 1.0,
+
+    -1.0, -1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
+     1.0, -1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
+     1.0,  1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
+    -1.0,  1.0,  1.0,   0.0, 1.0, 0.0, 1.0,
+
+    -1.0, -1.0, -1.0,   0.0, 0.0, 1.0, 1.0,
+    -1.0,  1.0, -1.0,   0.0, 0.0, 1.0, 1.0,
+    -1.0,  1.0,  1.0,   0.0, 0.0, 1.0, 1.0,
+    -1.0, -1.0,  1.0,   0.0, 0.0, 1.0, 1.0,
+
+    1.0, -1.0, -1.0,    1.0, 0.5, 0.0, 1.0,
+    1.0,  1.0, -1.0,    1.0, 0.5, 0.0, 1.0,
+    1.0,  1.0,  1.0,    1.0, 0.5, 0.0, 1.0,
+    1.0, -1.0,  1.0,    1.0, 0.5, 0.0, 1.0,
+
+    -1.0, -1.0, -1.0,   0.0, 0.5, 1.0, 1.0,
+    -1.0, -1.0,  1.0,   0.0, 0.5, 1.0, 1.0,
+     1.0, -1.0,  1.0,   0.0, 0.5, 1.0, 1.0,
+     1.0, -1.0, -1.0,   0.0, 0.5, 1.0, 1.0,
+
+    -1.0,  1.0, -1.0,   1.0, 0.0, 0.5, 1.0,
+    -1.0,  1.0,  1.0,   1.0, 0.0, 0.5, 1.0,
+     1.0,  1.0,  1.0,   1.0, 0.0, 0.5, 1.0,
+     1.0,  1.0, -1.0,   1.0, 0.0, 0.5, 1.0
+};
+
+static uint16_t cube_indices[] = {
+    0, 1, 2,  0, 2, 3,
+    6, 5, 4,  7, 6, 4,
+    8, 9, 10,  8, 10, 11,
+    14, 13, 12,  15, 14, 12,
+    16, 17, 18,  16, 18, 19,
+    22, 21, 20,  23, 22, 20
+};
+
+static void init(void) {
+    // setup sokol-gfx, sokol-imgui and sokol-gl
+    sg_setup(&(sg_desc){
+        .environment = sglue_environment(),
+        .logger.func = slog_func,
+    });
+    simgui_setup(&(simgui_desc_t){
+        .logger.func = slog_func,
+    });
+    sgl_setup(&(sgl_desc_t){
+        .logger.func = slog_func
+    });
+
+    // default pass actions
+    state.default_pass_action = (sg_pass_action) {
+        .colors[0] = {
+            .load_action = SG_LOADACTION_CLEAR,
+            .clear_value = { 0.0f, 0.5f, 0.7f, 1.0f }
+        }
+    };
+
+    // setup the sokol-gfx resources needed for the first user draw callback
+    {
+        state.scene1.bind.vertex_buffers[0] = sg_make_buffer(&(sg_buffer_desc){
+            .data = SG_RANGE(cube_vertices),
+            .label = "cube-vertices"
+        });
+
+        state.scene1.bind.index_buffer = sg_make_buffer(&(sg_buffer_desc){
+            .usage.index_buffer = true,
+            .data = SG_RANGE(cube_indices),
+            .label = "cube-indices"
+        });
+
+        state.scene1.pip = sg_make_pipeline(&(sg_pipeline_desc){
+            .layout = {
+                .attrs = {
+                    [ATTR_scene_position].format = SG_VERTEXFORMAT_FLOAT3,
+                    [ATTR_scene_color0].format   = SG_VERTEXFORMAT_FLOAT4
+                }
+            },
+            .shader = sg_make_shader(scene_shader_desc(sg_query_backend())),
+            .index_type = SG_INDEXTYPE_UINT16,
+            .depth = {
+                .compare = SG_COMPAREFUNC_LESS_EQUAL,
+                .write_enabled = true,
+            },
+            .cull_mode = SG_CULLMODE_BACK,
+            .label = "cube-pipeline"
+        });
+    }
+
+    // setup a sokol-gl pipeline needed for the second user draw callback
+    {
+        state.scene2.pip = sgl_make_pipeline(&(sg_pipeline_desc){
+            .depth = {
+                .write_enabled = true,
+                .compare = SG_COMPAREFUNC_LESS_EQUAL,
+            },
+            .cull_mode = SG_CULLMODE_BACK
+        });
+    }
+}
+
+// an ImGui draw callback to render directly with sokol-gfx
+static void draw_scene_1(const ImDrawList* dl, const ImDrawCmd* cmd) {
+    (void)dl;
+
+    // first set the viewport rectangle to render in, same as
+    // the ImGui draw command's clip rect
+    const int cx = (int) cmd->ClipRect.x;
+    const int cy = (int) cmd->ClipRect.y;
+    const int cw = (int) (cmd->ClipRect.z - cmd->ClipRect.x);
+    const int ch = (int) (cmd->ClipRect.w - cmd->ClipRect.y);
+    sg_apply_scissor_rect(cx, cy, cw, ch, true);
+    sg_apply_viewport(cx, cy, 360, 360, true);
+
+    // a model-view-proj matrix for the vertex shader
+    const float t = (float)(sapp_frame_duration() * 60.0);
+    const mat44_t proj = mat44_perspective_fov_rh(vm_radians(60.0f), 1.0f, 0.01f, 10.0f);
+    const mat44_t view = mat44_look_at_rh(vec3(0.0f, 1.5f, 4.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
+    const mat44_t view_proj = vm_mul(view, proj);
+    state.scene1.rx += 1.0f * t; state.scene1.ry += 2.0f * t;
+    const mat44_t rxm = mat44_rotation_x(vm_radians(state.scene1.rx));
+    const mat44_t rym = mat44_rotation_y(vm_radians(state.scene1.ry));
+    const mat44_t model = vm_mul(rym, rxm);
+    const vs_params_t vs_params = { .mvp = vm_mul(model, view_proj) };
+
+    /*
+        NOTE: we cannot start a separate render pass here since passes cannot
+        be nested, so if we'd need to clear the color- or z-buffer we'd need to
+        render a quad instead
+
+        Another option is to render into a texture render target outside the
+        ImGui user callback, and render this texture as quad inside the
+        callback (or as a standard Image widget). This allows to perform rendering
+        inside an (offscreen) render pass, and clear the background as usual.
+    */
+    sg_apply_pipeline(state.scene1.pip);
+    sg_apply_bindings(&state.scene1.bind);
+    sg_apply_uniforms(UB_vs_params, &SG_RANGE(vs_params));
+    sg_draw(0, 36, 1);
+}
+
+// helper function to draw a cube via sokol-gl
+static void cube_sgl(void) {
+    sgl_begin_quads();
+    sgl_c3f(1.0f, 0.0f, 0.0f);
+        sgl_v3f_t2f(-1.0f,  1.0f, -1.0f, -1.0f,  1.0f);
+        sgl_v3f_t2f( 1.0f,  1.0f, -1.0f,  1.0f,  1.0f);
+        sgl_v3f_t2f( 1.0f, -1.0f, -1.0f,  1.0f, -1.0f);
+        sgl_v3f_t2f(-1.0f, -1.0f, -1.0f, -1.0f, -1.0f);
+    sgl_c3f(0.0f, 1.0f, 0.0f);
+        sgl_v3f_t2f(-1.0, -1.0,  1.0, -1.0f,  1.0f);
+        sgl_v3f_t2f( 1.0, -1.0,  1.0,  1.0f,  1.0f);
+        sgl_v3f_t2f( 1.0,  1.0,  1.0,  1.0f, -1.0f);
+        sgl_v3f_t2f(-1.0,  1.0,  1.0, -1.0f, -1.0f);
+    sgl_c3f(0.0f, 0.0f, 1.0f);
+        sgl_v3f_t2f(-1.0, -1.0,  1.0, -1.0f,  1.0f);
+        sgl_v3f_t2f(-1.0,  1.0,  1.0,  1.0f,  1.0f);
+        sgl_v3f_t2f(-1.0,  1.0, -1.0,  1.0f, -1.0f);
+        sgl_v3f_t2f(-1.0, -1.0, -1.0, -1.0f, -1.0f);
+    sgl_c3f(1.0f, 0.5f, 0.0f);
+        sgl_v3f_t2f(1.0, -1.0,  1.0, -1.0f,   1.0f);
+        sgl_v3f_t2f(1.0, -1.0, -1.0,  1.0f,   1.0f);
+        sgl_v3f_t2f(1.0,  1.0, -1.0,  1.0f,  -1.0f);
+        sgl_v3f_t2f(1.0,  1.0,  1.0, -1.0f,  -1.0f);
+    sgl_c3f(0.0f, 0.5f, 1.0f);
+        sgl_v3f_t2f( 1.0, -1.0, -1.0, -1.0f,  1.0f);
+        sgl_v3f_t2f( 1.0, -1.0,  1.0,  1.0f,  1.0f);
+        sgl_v3f_t2f(-1.0, -1.0,  1.0,  1.0f, -1.0f);
+        sgl_v3f_t2f(-1.0, -1.0, -1.0, -1.0f, -1.0f);
+    sgl_c3f(1.0f, 0.0f, 0.5f);
+        sgl_v3f_t2f(-1.0,  1.0, -1.0, -1.0f,  1.0f);
+        sgl_v3f_t2f(-1.0,  1.0,  1.0,  1.0f,  1.0f);
+        sgl_v3f_t2f( 1.0,  1.0,  1.0,  1.0f, -1.0f);
+        sgl_v3f_t2f( 1.0,  1.0, -1.0, -1.0f, -1.0f);
+    sgl_end();
+}
+
+// another ImGui draw callback to render via sokol-gl
+static void draw_scene_2(const ImDrawList* dl, const ImDrawCmd* cmd) {
+    (void)dl;
+    const float t = (float)(sapp_frame_duration() * 60.0);
+
+    const int cx = (int) cmd->ClipRect.x;
+    const int cy = (int) cmd->ClipRect.y;
+    const int cw = (int) (cmd->ClipRect.z - cmd->ClipRect.x);
+    const int ch = (int) (cmd->ClipRect.w - cmd->ClipRect.y);
+    sgl_scissor_rect(cx, cy, cw, ch, true);
+    sgl_viewport(cx, cy, 360, 360, true);
+
+    state.scene2.r0 += 1.0f * t;
+    state.scene2.r1 += 2.0f * t;
+
+    sgl_defaults();
+    sgl_load_pipeline(state.scene2.pip);
+
+    sgl_matrix_mode_projection();
+    sgl_perspective(sgl_rad(45.0f), 1.0f, 0.1f, 100.0f);
+
+    sgl_matrix_mode_modelview();
+    sgl_translate(0.0f, 0.0f, -12.0f);
+    sgl_rotate(sgl_rad(state.scene2.r0), 1.0f, 0.0f, 0.0f);
+    sgl_rotate(sgl_rad(state.scene2.r1), 0.0f, 1.0f, 0.0f);
+    cube_sgl();
+    sgl_push_matrix();
+        sgl_translate(0.0f, 0.0f, 3.0f);
+        sgl_scale(0.5f, 0.5f, 0.5f);
+        sgl_rotate(-2.0f * sgl_rad(state.scene2.r0), 1.0f, 0.0f, 0.0f);
+        sgl_rotate(-2.0f * sgl_rad(state.scene2.r1), 0.0f, 1.0f, 0.0f);
+        cube_sgl();
+        sgl_push_matrix();
+            sgl_translate(0.0f, 0.0f, 3.0f);
+            sgl_scale(0.5f, 0.5f, 0.5f);
+            sgl_rotate(-3.0f * sgl_rad(2*state.scene2.r0), 1.0f, 0.0f, 0.0f);
+            sgl_rotate(3.0f * sgl_rad(2*state.scene2.r1), 0.0f, 0.0f, 1.0f);
+            cube_sgl();
+        sgl_pop_matrix();
+    sgl_pop_matrix();
+
+    /*
+        render the sokol-gl command list, this is the only call
+        which actually needs to happen here in the callback,
+        current downside is that only one such call must happen
+        per frame
+    */
+    sgl_draw();
+}
+
+static void frame(void) {
+
+    // create the ImGui UI, a single window with two child views, each
+    // rendering its own custom 3D scene via a user draw callback
+    const int w = sapp_width();
+    const int h = sapp_height();
+    simgui_new_frame(&(simgui_frame_desc_t){
+        .width = w,
+        .height = h,
+        .delta_time = sapp_frame_duration(),
+        .dpi_scale = sapp_dpi_scale()
+    });
+
+    igSetNextWindowPos((ImVec2){20, 20}, ImGuiCond_Once);
+    igSetNextWindowSize((ImVec2){800, 400}, ImGuiCond_Once);
+    if (igBegin("Dear ImGui", 0, 0)) {
+        if (igBeginChild("sokol-gfx", (ImVec2){360, 360}, true, ImGuiWindowFlags_None)) {
+            ImDrawList* dl = igGetWindowDrawList();
+            ImDrawList_AddCallback(dl, draw_scene_1, 0);
+        }
+        igEndChild();
+        igSameLineEx(0, 10);
+        if (igBeginChild("sokol-gl", (ImVec2){360, 360}, true, ImGuiWindowFlags_None)) {
+            ImDrawList* dl = igGetWindowDrawList();
+            ImDrawList_AddCallback(dl, draw_scene_2, 0);
+        }
+        igEndChild();
+    }
+    igEnd();
+
+    // actual UI rendering, the user draw callbacks are called from inside simgui_render()
+    sg_begin_pass(&(sg_pass){
+        .action = state.default_pass_action,
+        .swapchain = sglue_swapchain()
+    });
+    simgui_render();
+    sg_end_pass();
+    sg_commit();
+    if(jit_request_close) sapp_quit();
+}
+
+static void cleanup(void) {
+    sgl_shutdown();
+    simgui_shutdown();
+    sg_shutdown();
+}
+
+static void input(const sapp_event * ev) {
+    simgui_handle_event(ev);
+}
+
+int main(int argc, char *argv[]) {
+    sapp_run(&(sapp_desc) {
+        .init_cb = init,
+        .frame_cb = frame,
+        .cleanup_cb = cleanup,
+        .event_cb = input,
+        .width = 860,
+        .height = 440,
+        .swap_interval = 1,
+        .window_title = "imgui-usercallback",
+        .icon.sokol_default = true,
+        .logger.func = slog_func,
+    });
+    #ifndef HAS_ASYNC_LOOP
+    sapp_quit();
+    #endif
+    return 0;
+
+}
+

@@ -1,0 +1,158 @@
+/* SPDX-License-Identifier: Zlib
+|-------------------------------------------------------------------------------------------------------->>
+| https://wake.tools - [cimgui-sapp.c] - JIT C Runtime - C99+ (extensions)
+|-------------------------------------------------------------------------------------------------------->>
+| Adapted from the Sokol samples by Andreas 'floooh' (zlib/libpng License)
+| Converted to JIT (.jc) - zero build time - live execution - safe memory (bound checking) - GDB-ready
+| Original: https://github.com/floooh/sokol-samples/blob/master/sapp/cimgui-sapp.c
+|-------------------------------------------------------------------------------------------------------->>
+| run: wake cimgui-sapp.jc
+|-------------------------------------------------------------------------------------------------------->>
+| WAKE-LANG (Wake-Lang Executable Metadata - parsed by Wake - targets: w32, w64 [Windows 32/64-bit])
+|-------------------------------------------------------------------------------------------------------->>
+	<:jit:w32|w64>
+		#Jit.add .sm/cimgui-sapp.sm
+		>
+		{wk.module.sys.r}wake-tools/tcc-v0.1w/tcc
+			-xc -shared {this.file}
+
+			-b -l.{build.sys.r}.wake-tools--tcc.bcheck-atom-v0.1w
+			-Werror
+			-bench
+			-v
+
+			-L {wk.libs}
+				-l.{build.sys}.wake-tools--sokol-ig-v0.1w    -I {wk.include}wake-tools/sokol-v0.1w
+				-l.{build.sys}.wake-tools--imgui-v0.1w       -I {wk.include}wake-tools/imgui-v0.1w
+				-l.{build.sys}.wake-tools--jit-v0.1w         -I {wk.include}wake-tools/jit-v0.1w
+				-l.{build.sys}.wake-tools--sapp-v0.1w        -I {wk.include}wake-tools/sapp-v0.1w
+				-l.{build.sys}.wake-tools--sgfx-v0.1w        -I {wk.include}wake-tools/sgfx-v0.1w
+
+			-l msvcrt -l shell32 -l dwmapi -l user32
+
+		-o {jit.file}
+		>
+		#Jit.reload
+	<:/jit:>
+|-------------------------------------------------------------------------------------------------------->>
+*/
+//------------------------------------------------------------------------------
+//  cimgui-sapp.c
+//
+//  Demonstrates Dear ImGui UI rendering in C via
+//------------------------------------------------------------------------------
+#include <jit.h>
+
+#define USE_DBG_UI
+#include <sokol.h>
+
+#include "sokol_log.h"
+#include "cimgui.h"
+#include "sokol_imgui.h"
+
+typedef struct {
+    uint64_t last_time;
+    bool show_test_window;
+    bool show_another_window;
+    sg_pass_action pass_action;
+} state_t;
+static state_t state;
+
+static void init(void) {
+    // setup sokol-gfx, sokol-time and sokol-imgui
+    sg_setup(&(sg_desc){
+        .environment = sglue_environment(),
+        .logger.func = slog_func,
+    });
+
+    // use sokol-imgui with all default-options (we're not doing
+    // multi-sampled rendering or using non-default pixel formats)
+    simgui_setup(&(simgui_desc_t){
+        .logger.func = slog_func,
+    });
+
+    /* initialize application state */
+    state = (state_t) {
+        .show_test_window = true,
+        .pass_action = {
+            .colors[0] = {
+                .load_action = SG_LOADACTION_CLEAR,
+                .clear_value = { 0.7f, 0.5f, 0.0f, 0.5f }
+            }
+        }
+    };
+}
+
+static void frame(void) {
+    const int width = sapp_width();
+    const int height = sapp_height();
+    simgui_new_frame(&(simgui_frame_desc_t){
+        .width = width,
+        .height = height,
+        .delta_time = sapp_frame_duration(),
+        .dpi_scale = sapp_dpi_scale()
+    });
+
+    // 1. Show a simple window
+    // Tip: if we don't call ImGui::Begin()/ImGui::End() the widgets appears in a window automatically called "Debug"
+    static float f = 0.0f;
+    igText("Hello, world!");
+    igSliderFloatEx("float", &f, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_None);
+    igColorEdit3("clear color", (float*)&state.pass_action.colors[0].clear_value, 0);
+    if (igButton("Test Window")) state.show_test_window ^= 1;
+    if (igButton("Another Window")) state.show_another_window ^= 1;
+    igText("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / igGetIO()->Framerate, igGetIO()->Framerate);
+
+    // 2. Show another simple window, this time using an explicit Begin/End pair
+    if (state.show_another_window) {
+        igSetNextWindowSize((ImVec2){200,100}, ImGuiCond_FirstUseEver);
+        igBegin("Another Window", &state.show_another_window, 0);
+        igText("Hello");
+        igEnd();
+    }
+
+    // 3. Show the ImGui test window. Most of the sample code is in ImGui::ShowDemoWindow()
+    if (state.show_test_window) {
+        igSetNextWindowPos((ImVec2){460,20}, ImGuiCond_FirstUseEver);
+        igShowDemoWindow(0);
+    }
+
+    // the sokol_gfx draw pass
+    sg_begin_pass(&(sg_pass){ .action = state.pass_action, .swapchain = sglue_swapchain() });
+    simgui_render();
+    sg_end_pass();
+    sg_commit();
+    if(jit_request_close) sapp_quit();
+}
+
+static void cleanup(void) {
+    simgui_shutdown();
+    sg_shutdown();
+}
+
+static void input(const sapp_event* event) {
+    simgui_handle_event(event);
+}
+
+int main(int argc, char *argv[]) {
+    sapp_run(&(sapp_desc) {
+        .init_cb = init,
+        .frame_cb = frame,
+        .cleanup_cb = cleanup,
+        .event_cb = input,
+        .width = 1024,
+        .height = 768,
+        .swap_interval = 1,
+        .window_title = "cimgui (sokol-app)",
+        .ios_keyboard_resizes_canvas = false,
+        .icon.sokol_default = true,
+        .enable_clipboard = true,
+        .logger.func = slog_func,
+    });
+    #ifndef HAS_ASYNC_LOOP
+    sapp_quit();
+    #endif
+    return 0;
+
+}
+

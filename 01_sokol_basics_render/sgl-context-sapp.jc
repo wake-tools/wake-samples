@@ -1,0 +1,251 @@
+/* SPDX-License-Identifier: Zlib
+|-------------------------------------------------------------------------------------------------------->>
+| https://wake.tools - [sgl-context-sapp.c] - JIT C Runtime - C99+ (extensions)
+|-------------------------------------------------------------------------------------------------------->>
+| Adapted from the Sokol samples by Andreas 'floooh' (zlib/libpng License)
+| Converted to JIT (.jc) - zero build time - live execution - safe memory (bound checking) - GDB-ready
+| Original: https://github.com/floooh/sokol-samples/blob/master/sapp/sgl-context-sapp.c
+|-------------------------------------------------------------------------------------------------------->>
+| run: wake sgl-context-sapp.jc
+|-------------------------------------------------------------------------------------------------------->>
+| WAKE-LANG (Wake-Lang Executable Metadata - parsed by Wake - targets: w32, w64 [Windows 32/64-bit])
+|-------------------------------------------------------------------------------------------------------->>
+	<:jit:w32|w64>
+		#Jit.add .sm/sgl-context-sapp.sm
+		>
+		{wk.module.sys.r}wake-tools/tcc-v0.1w/tcc
+			-xc -shared {this.file}
+
+			-b -l.{build.sys.r}.wake-tools--tcc.bcheck-atom-v0.1w
+			-Werror
+			-bench
+			-v
+
+			-L {wk.libs}
+				-l.{build.sys}.wake-tools--sokol-ig-v0.1w    -I {wk.include}wake-tools/sokol-v0.1w
+				-l.{build.sys}.wake-tools--imgui-v0.1w       -I {wk.include}wake-tools/imgui-v0.1w
+				-l.{build.sys}.wake-tools--jit-v0.1w         -I {wk.include}wake-tools/jit-v0.1w
+				-l.{build.sys}.wake-tools--sapp-v0.1w        -I {wk.include}wake-tools/sapp-v0.1w
+				-l.{build.sys}.wake-tools--sgfx-v0.1w        -I {wk.include}wake-tools/sgfx-v0.1w
+
+			-l msvcrt -l shell32 -l dwmapi -l user32
+
+		-o {jit.file}
+		>
+		#Jit.reload
+	<:/jit:>
+|-------------------------------------------------------------------------------------------------------->>
+*/
+//------------------------------------------------------------------------------
+//  sgl-context-sapp.c
+//
+//  Demonstrates how to render in different render passes with sokol_gl.h
+//  using sokol-gl contexts.
+//------------------------------------------------------------------------------
+#include <jit.h>
+
+#define USE_DBG_UI
+#include <sokol.h>
+
+#include "sokol_log.h"
+#include "sokol_gl.h"
+
+static struct {
+    double angle_deg;
+    struct {
+        sg_view tex_view;
+        sg_pass pass;
+        sgl_context sgl_ctx;
+    } offscreen;
+    struct {
+        sg_pass_action pass_action;
+        sg_sampler smp;
+        sgl_pipeline sgl_pip;
+    } display;
+} state;
+
+#define OFFSCREEN_PIXELFORMAT (SG_PIXELFORMAT_RGBA8)
+#define OFFSCREEN_SAMPLECOUNT (1)
+#define OFFSCREEN_WIDTH (32)
+#define OFFSCREEN_HEIGHT (32)
+
+// helper functions (at the end of this file)
+static void draw_cube(void);
+static void draw_quad(void);
+
+static void init(void) {
+    sg_setup(&(sg_desc){
+        .environment = sglue_environment(),
+        .logger.func = slog_func,
+    });
+    __cdbgui_setup(sapp_sample_count());
+
+    // setup sokol-gl with the default context compatible with the default render pass
+    sgl_setup(&(sgl_desc_t){
+        .max_vertices = 64,
+        .max_commands = 16,
+        .logger.func = slog_func,
+    });
+
+    // pass action and pipeline for the default render pass
+    state.display.pass_action = (sg_pass_action) {
+        .colors[0] = {
+            .load_action = SG_LOADACTION_CLEAR,
+            .clear_value = { 0.5f, 0.7f, 1.0f, 1.0f }
+        }
+    };
+    state.display.sgl_pip = sgl_context_make_pipeline(sgl_default_context(), &(sg_pipeline_desc){
+        .cull_mode = SG_CULLMODE_BACK,
+        .depth = {
+            .write_enabled = true,
+            .compare = SG_COMPAREFUNC_LESS_EQUAL
+        }
+    });
+
+    // create a sokol-gl context compatible with the offscreen render pass
+    // (specific color pixel format, no depth-stencil-surface, no MSAA)
+    state.offscreen.sgl_ctx = sgl_make_context(&(sgl_context_desc_t){
+        .max_vertices = 8,
+        .max_commands = 4,
+        .color_format = OFFSCREEN_PIXELFORMAT,
+        .depth_format = SG_PIXELFORMAT_NONE,
+        .sample_count = OFFSCREEN_SAMPLECOUNT,
+    });
+
+    // create an offscreen render target image, texture and attachment views
+    sg_image img = sg_make_image(&(sg_image_desc){
+        .usage.color_attachment = true,
+        .width = OFFSCREEN_WIDTH,
+        .height = OFFSCREEN_HEIGHT,
+        .pixel_format = OFFSCREEN_PIXELFORMAT,
+        .sample_count = OFFSCREEN_SAMPLECOUNT,
+    });
+    state.offscreen.tex_view = sg_make_view(&(sg_view_desc){
+        .texture.image = img,
+    });
+    state.offscreen.pass = (sg_pass){
+        .action = {
+            .colors[0] = {
+                .load_action = SG_LOADACTION_CLEAR,
+                .clear_value = { 0.0f, 0.0f, 0.0f, 0.5f }
+            },
+        },
+        .attachments = {
+            .colors[0] = sg_make_view(&(sg_view_desc){
+                .color_attachment.image = img,
+            }),
+        },
+    };
+
+    // a sampler for sampling the offscreen render target
+    state.display.smp = sg_make_sampler(&(sg_sampler_desc){
+        .wrap_u = SG_WRAP_CLAMP_TO_EDGE,
+        .wrap_v = SG_WRAP_CLAMP_TO_EDGE,
+        .min_filter = SG_FILTER_NEAREST,
+        .mag_filter = SG_FILTER_NEAREST
+    });
+}
+
+static void frame(void) {
+    state.angle_deg += sapp_frame_duration() * 60.0;
+    const float a = sgl_rad((float)state.angle_deg);
+
+    // draw a rotating quad into the offscreen render target texture
+    sgl_set_context(state.offscreen.sgl_ctx);
+    sgl_defaults();
+    sgl_matrix_mode_modelview();
+    sgl_rotate(a, 0.0f, 0.0f, 1.0f);
+    draw_quad();
+
+    // draw a rotating 3D cube, using the offscreen render target as texture
+    sgl_set_context(SGL_DEFAULT_CONTEXT);
+    sgl_defaults();
+    sgl_enable_texture();
+    sgl_texture(state.offscreen.tex_view, state.display.smp);
+    sgl_load_pipeline(state.display.sgl_pip);
+    sgl_matrix_mode_projection();
+    sgl_perspective(sgl_rad(45.0f), sapp_widthf()/sapp_heightf(), 0.1f, 100.0f);
+    const float eye[3] = { sinf(a) * 6.0f, sinf(a) * 3.0f, cosf(a) * 6.0f };
+    sgl_matrix_mode_modelview();
+    sgl_lookat(eye[0], eye[1], eye[2], 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f);
+    draw_cube();
+
+    // do the actual offscreen and display rendering in sokol-gfx passes
+    sg_begin_pass(&state.offscreen.pass);
+    sgl_context_draw(state.offscreen.sgl_ctx);
+    sg_end_pass();
+    sg_begin_pass(&(sg_pass){ .action = state.display.pass_action, .swapchain = sglue_swapchain() });
+    sgl_context_draw(SGL_DEFAULT_CONTEXT);
+    __cdbgui_draw();
+    sg_end_pass();
+    sg_commit();
+    if(jit_request_close) sapp_quit();
+}
+
+static void cleanup(void) {
+    __cdbgui_shutdown();
+    sgl_shutdown();
+    sg_shutdown();
+}
+
+int main(int argc, char *argv[]) {
+    sapp_run(&(sapp_desc) {
+        .init_cb = init,
+        .frame_cb = frame,
+        .cleanup_cb = cleanup,
+        .event_cb = __cdbgui_event,
+        .width = 800,
+        .height = 600,
+        .sample_count = 4,
+        .swap_interval = 1,
+        .window_title = "sokol-gl contexts (sapp)",
+        .icon.sokol_default = true,
+        .logger.func = slog_func,
+    });
+    #ifndef HAS_ASYNC_LOOP
+    sapp_quit();
+    #endif
+    return 0;
+
+}
+
+// helper function to draw a colored quad with sokol-gl
+static void draw_quad(void) {
+    sgl_begin_quads();
+    sgl_v2f_c3b( 0.0f, -1.0f, 255, 0, 0);
+    sgl_v2f_c3b( 1.0f,  0.0f, 0, 0, 255);
+    sgl_v2f_c3b( 0.0f,  1.0f, 0, 255, 255);
+    sgl_v2f_c3b(-1.0f,  0.0f, 0, 255, 0);
+    sgl_end();
+}
+
+// helper function to draw a textured cube with sokol-gl
+static void draw_cube(void) {
+    sgl_begin_quads();
+    sgl_v3f_t2f(-1.0f,  1.0f, -1.0f, 0.0f, 1.0f);
+    sgl_v3f_t2f( 1.0f,  1.0f, -1.0f, 1.0f, 1.0f);
+    sgl_v3f_t2f( 1.0f, -1.0f, -1.0f, 1.0f, 0.0f);
+    sgl_v3f_t2f(-1.0f, -1.0f, -1.0f, 0.0f, 0.0f);
+    sgl_v3f_t2f(-1.0f, -1.0f,  1.0f, 0.0f, 1.0f);
+    sgl_v3f_t2f( 1.0f, -1.0f,  1.0f, 1.0f, 1.0f);
+    sgl_v3f_t2f( 1.0f,  1.0f,  1.0f, 1.0f, 0.0f);
+    sgl_v3f_t2f(-1.0f,  1.0f,  1.0f, 0.0f, 0.0f);
+    sgl_v3f_t2f(-1.0f, -1.0f,  1.0f, 0.0f, 1.0f);
+    sgl_v3f_t2f(-1.0f,  1.0f,  1.0f, 1.0f, 1.0f);
+    sgl_v3f_t2f(-1.0f,  1.0f, -1.0f, 1.0f, 0.0f);
+    sgl_v3f_t2f(-1.0f, -1.0f, -1.0f, 0.0f, 0.0f);
+    sgl_v3f_t2f( 1.0f, -1.0f,  1.0f, 0.0f, 1.0f);
+    sgl_v3f_t2f( 1.0f, -1.0f, -1.0f, 1.0f, 1.0f);
+    sgl_v3f_t2f( 1.0f,  1.0f, -1.0f, 1.0f, 0.0f);
+    sgl_v3f_t2f( 1.0f,  1.0f,  1.0f, 0.0f, 0.0f);
+    sgl_v3f_t2f( 1.0f, -1.0f, -1.0f, 0.0f, 1.0f);
+    sgl_v3f_t2f( 1.0f, -1.0f,  1.0f, 1.0f, 1.0f);
+    sgl_v3f_t2f(-1.0f, -1.0f,  1.0f, 1.0f, 0.0f);
+    sgl_v3f_t2f(-1.0f, -1.0f, -1.0f, 0.0f, 0.0f);
+    sgl_v3f_t2f(-1.0f,  1.0f, -1.0f, 0.0f, 1.0f);
+    sgl_v3f_t2f(-1.0f,  1.0f,  1.0f, 1.0f, 1.0f);
+    sgl_v3f_t2f( 1.0f,  1.0f,  1.0f, 1.0f, 0.0f);
+    sgl_v3f_t2f( 1.0f,  1.0f, -1.0f, 0.0f, 0.0f);
+    sgl_end();
+}
+
