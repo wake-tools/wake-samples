@@ -1,6 +1,6 @@
 # 🧩 Wake-Samples
 
-A collection of **JIT C (.jc)** demos running instantly with **Wake** —  
+A collection of **JIT C (.jc)** demos running instantly with **Wake**,
 no build system, no waiting, just **code → run**.
 
 All examples are adapted from the official **Sokol samples** (zlib/libpng license)  
@@ -18,3 +18,4 @@ or run it from the command line:
 # From the sample folder
 wake clear-sapp.jc
 wake cube-sapp.jc
+...
