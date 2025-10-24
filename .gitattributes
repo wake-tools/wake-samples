@@ -1,0 +1,3 @@
+# Wake JIT files recognized as C
+*.jc linguist-language=C
+*.jc linguist-detectable=true
