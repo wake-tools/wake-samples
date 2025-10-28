@@ -3,7 +3,7 @@
 | https://wake.tools - [cimgui-sapp.c] - JIT C Runtime - C99+ (extensions)
 |-------------------------------------------------------------------------------------------------------->>
 | Adapted from the Sokol samples by Andreas 'floooh' (zlib/libpng License)
-| Converted to JIT (.jc) - zero build time - live execution - safe memory (bound checking) - GDB-ready
+| Converted to JIT (.jc) - live feedback - safe memory (bound checking) - GDB-ready
 | Original: https://github.com/floooh/sokol-samples/blob/master/sapp/cimgui-sapp.c
 |-------------------------------------------------------------------------------------------------------->>
 | run: wake cimgui-sapp.jc
@@ -42,9 +42,10 @@
 //  Demonstrates Dear ImGui UI rendering in C via
 //------------------------------------------------------------------------------
 #include <jit.h>
-
 #define USE_DBG_UI
 #include <sokol.h>
+
+#define LOG(fmt, ...) printf("a: [cimgui-sapp.jc]:%s:%d: " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
 
 #include "sokol_log.h"
 #include "cimgui.h"
@@ -135,6 +136,7 @@ static void input(const sapp_event* event) {
 }
 
 int main(int argc, char *argv[]) {
+    LOG("JIT MAIN");
     sapp_run(&(sapp_desc) {
         .init_cb = init,
         .frame_cb = frame,

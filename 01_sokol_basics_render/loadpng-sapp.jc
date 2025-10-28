@@ -3,7 +3,7 @@
 | https://wake.tools - [loadpng-sapp.c] - JIT C Runtime - C99+ (extensions)
 |-------------------------------------------------------------------------------------------------------->>
 | Adapted from the Sokol samples by Andreas 'floooh' (zlib/libpng License)
-| Converted to JIT (.jc) - zero build time - live execution - safe memory (bound checking) - GDB-ready
+| Converted to JIT (.jc) - live feedback - safe memory (bound checking) - GDB-ready
 | Original: https://github.com/floooh/sokol-samples/blob/master/sapp/loadpng-sapp.c
 |-------------------------------------------------------------------------------------------------------->>
 | run: wake loadpng-sapp.jc
@@ -54,9 +54,10 @@
 #define VECMATH_GENERICS
 #include <jit/vecmath.h>
 #include <jit.h>
-
 #define USE_DBG_UI
 #include <sokol.h>
+
+#define LOG(fmt, ...) printf("a: [loadpng-sapp.jc]:%s:%d: " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
 
 #include "sokol_fetch.h"
 #include "sokol_log.h"
@@ -288,6 +289,7 @@ static vs_params_t compute_vsparams(float rx, float ry) {
 }
 
 int main(int argc, char *argv[]) {
+    LOG("JIT MAIN");
     sapp_run(&(sapp_desc){
         .init_cb = init,
         .frame_cb = frame,
