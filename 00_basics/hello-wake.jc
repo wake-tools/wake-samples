@@ -1,0 +1,56 @@
+/* SPDX-License-Identifier: Zlib
+|-------------------------------------------------------------------------------------------------------->>
+| https://wake.tools - [hello-wake.jc] - JIT C Runtime - C99+ (extensions)
+|-------------------------------------------------------------------------------------------------------->>
+| wake hello-wake.jc
+|-------------------------------------------------------------------------------------------------------->>
+| WAKE-LANG (Wake-Lang Executable Metadata - parsed by Wake - targets: w32, w64 [Windows 32/64-bit])
+|-------------------------------------------------------------------------------------------------------->>
+	<:jit:w32|w64>
+		#Jit.add .sm/hello-wake.sm
+		>
+		{wk.module.sys.r}wake-tools/tcc-v0.1w/tcc
+			-xc -shared {this.file}
+
+			-b -l.{build.sys.r}.wake-tools--tcc.bcheck-atom-v0.1w
+          -gdwarf-5
+			-Werror
+			-bench
+			-v
+
+			-L {wk.libs}
+            -l.{build.sys}.wake-tools--jit-v0.1w         -I {wk.include}wake-tools/jit-v0.1w
+
+		-o {jit.file}
+		>
+		#Jit.reload
+	<:/jit:>
+|-------------------------------------------------------------------------------------------------------->>
+|  Hello Wake (Minimal JIT Example)
+|
+| Edit this file and save — Wake recompiles and reloads it instantly.
+| You’ll see the new message appear live in the Wake console.
+|
+| Example:
+|   LOG("Hello Wake!");   → prints to the Wake console
+|   LOG("Changed!");      → edit & save to see instant update
+|
+| This shows Wake’s live workflow:
+|   - Real C code (compiled with TCC)
+|   - Hot-reload on save
+|   - No build step, no delay
+|
+| Wake lets you experiment freely and see results in real time.
+|-------------------------------------------------------------------------------------------------------->>
+*/
+#include <jit.h>
+
+#define LOG(fmt, ...) printf("a: [hello-wake]:%s:%d: " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
+
+int main(int argc, char *argv[]) {
+    LOG("Hello Wake!"); // Hot-reload: edit and save to apply changes live in the Wake console
+    LOG("...");
+    LOG("JIT end");
+    return 0;
+}
+

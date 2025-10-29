@@ -1,0 +1,67 @@
+/* SPDX-License-Identifier: Zlib
+|-------------------------------------------------------------------------------------------------------->>
+| https://wake.tools - [hello-wake.jc] - JIT C Runtime - C99+ (extensions)
+|-------------------------------------------------------------------------------------------------------->>
+| wake hello-wake.jc
+|-------------------------------------------------------------------------------------------------------->>
+| WAKE-LANG (Wake-Lang Executable Metadata - parsed by Wake - targets: w32, w64 [Windows 32/64-bit])
+|-------------------------------------------------------------------------------------------------------->>
+	<:jit:w32|w64>
+		#Jit.add .sm/hello-wake.sm
+		>
+		{wk.module.sys.r}wake-tools/tcc-v0.1w/tcc
+			-xc -shared {this.file} 
+         
+			-b -l.{build.sys.r}.wake-tools--tcc.bcheck-atom-v0.1w
+          -gdwarf-5
+			-Werror
+			-bench
+			-v
+
+			-L {wk.libs}
+            -l.{build.sys}.wake-tools--jit-v0.1w         -I {wk.include}wake-tools/jit-v0.1w
+
+		-o {jit.file}
+		>
+		#Jit.reload
+	<:/jit:>
+|-------------------------------------------------------------------------------------------------------->>
+|  GDB integration (Wake Console)
+|
+| Create a bound check error
+| Then you can send GDB commands directly from the Wake console:
+|
+|   Cmd: bt             → show backtrace
+|   Cmd: frame 3        → jump to test_bound_check() (#3 on the stack)
+|   Cmd: info locals    → list variables (use -gdwarf-5 for debug symbols)
+|   Cmd: disassemble    → view generated machine code
+|
+| Example:
+|   char a[4];
+|   a[5] = 'x';   // triggers BCHECK + GDB breakpoint
+|
+| This lets you debug JIT code live, without leaving the Wake environment.
+|-------------------------------------------------------------------------------------------------------->>
+
+*/
+#include <jit.h>
+
+#define LOG(fmt, ...) printf("a: [hello-bound-check]:%s:%d: " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
+
+void test_bound_check(){
+   LOG("Test Bound Check!");
+   int local = 777;// send "frame 3", then "info locals" in the Wake console to see the actual value.
+   
+   // Automatic GDB trap on out-of-bounds:
+   char bound[4];
+   bound[5]='x';// <-- bound check error + gdb breakpoint & backtrace
+}
+
+int main(int argc, char *argv[]) {
+    LOG("JIT MAIN");
+    test_bound_check();
+    LOG("...");
+    LOG("JIT end");
+    return 0;
+}
+
