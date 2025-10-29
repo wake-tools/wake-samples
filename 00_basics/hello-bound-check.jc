@@ -42,7 +42,6 @@
 |
 | This lets you debug JIT code live, without leaving the Wake environment.
 |-------------------------------------------------------------------------------------------------------->>
-
 */
 #include <jit.h>
 
@@ -64,4 +63,3 @@ int main(int argc, char *argv[]) {
     LOG("JIT end");
     return 0;
 }
-
