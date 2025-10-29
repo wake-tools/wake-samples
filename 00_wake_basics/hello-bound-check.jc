@@ -28,17 +28,17 @@
 |-------------------------------------------------------------------------------------------------------->>
 |  GDB integration (Wake Console)
 |
-| Create a bound check error
-| Then you can send GDB commands directly from the Wake console:
-|
-|   Cmd: bt             → show backtrace
-|   Cmd: frame 3        → jump to test_bound_check() (#3 on the stack)
-|   Cmd: info locals    → list variables (use -gdwarf-5 for debug symbols)
-|   Cmd: disassemble    → view generated machine code
-|
-| Example:
+| Create a bound check error:
 |   char a[4];
 |   a[5] = 'x';   // triggers BCHECK + GDB breakpoint
+|
+| Then you can send GDB commands directly from the Wake console, for example:
+|
+|   Cmd: bt             → show backtrace
+|   Cmd: frame N        → jump to test_bound_check() (#3 on the stack (w32))
+|   Cmd: info locals    → list variables (use -gdwarf-5 for debug symbols (w32)) 
+|   Cmd: list           → view current function code
+|   Cmd: disassemble    → view generated machine code
 |
 | This lets you debug JIT code live, without leaving the Wake environment.
 |-------------------------------------------------------------------------------------------------------->>
@@ -49,10 +49,8 @@
 
 void test_bound_check(){
    LOG("Test Bound Check!");
-   int local = 777;// send "frame 3", then "info locals" in the Wake console to see the actual value.
-   
    // Automatic GDB trap on out-of-bounds:
-   char bound[4];
+   char bound[4] = {1}; //info locals: "001\000\000"
    bound[5]='x';// <-- bound check error + gdb breakpoint & backtrace
 }
 
