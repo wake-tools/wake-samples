@@ -17,6 +17,7 @@
 			-xc -shared {this.file}
 
 			-b -l.{build.sys.r}.wake-tools--tcc.bcheck-atom-v0.1w
+			-gdwarf-5
 			-Werror
 			-bench
 			-v
