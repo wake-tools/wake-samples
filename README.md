@@ -14,7 +14,7 @@ and converted to Wake’s live runtime environment with **memory bound checking*
 Wake samples now include **full editor integration**:  
 - ✅ **VS Code** support with proper include paths and C99 settings  
 - ✅ **IntelliSense** auto-completion and diagnostics  
-- ✅ **clangd / [https://cursor.com/download](Cursor)** support for fast and accurate code navigation
+- ✅ **clangd / [Cursor](https://cursor.com/download)** support for fast and accurate code navigation
 
 Simply open the sample folder in your favorite editor
 all paths are already configured in `.vscode/c_cpp_properties.json`.
