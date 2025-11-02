@@ -11,7 +11,7 @@ and converted to Wake’s live runtime environment with **memory bound checking*
 
 ## Multi-Editor Support
 
-Wake samples now include **full editor integration**:  
+Wake samples now include
 - ✅ **VS Code** support with proper include paths and C99 settings  
 - ✅ **IntelliSense** auto-completion and diagnostics  
 - ✅ **clangd / [Cursor](https://cursor.com/download)** support for fast and accurate code navigation
