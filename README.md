@@ -1,6 +1,6 @@
 # [Wake](https://github.com/wake-tools/Wake) Samples
 
-A collection of **JIT C (.jc)** demos running instantly with **Wake** —  
+A collection of **JIT C** _`.jc`_ demos running instantly with **Wake** —  
 no build system, no waiting, just **code → run**.
 
 All examples are adapted from the official **Sokol samples** (zlib/libpng license)  
