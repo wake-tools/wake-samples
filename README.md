@@ -9,7 +9,7 @@ and converted to Wake’s live runtime environment with **memory bound checking*
 
 ---
 
-## 💡 Editor Support
+## Multi-Editor Support
 
 Wake samples now include **full editor integration**:  
 - ✅ **VS Code** support with proper include paths and C99 settings  
