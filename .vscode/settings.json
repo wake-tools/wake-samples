@@ -1,0 +1,37 @@
+{
+  "files.associations": {
+    "*.jc": "c",
+    "*.h": "c",
+    "*.inc": "c",
+    "*.glslh": "c",
+    "*.glsl": "glsl",
+    "*.vert": "glsl",
+    "*.frag": "glsl",
+    "*.comp": "glsl"
+  },
+
+  "clangd.arguments": [
+    "--enable-config",
+    "--compile-commands-dir=${workspaceFolder}",
+    "--background-index",
+    "--log=verbose"
+  ],
+  
+  "clangd.fallbackFlags": [
+    "-x","c",
+    "-std=c99",
+    "-D_WIN32",
+    "-D__TINYC__",
+
+    "-Wno-unused-parameter",
+    "-Wno-missing-braces",
+    
+    "-I","${env:WAKE_HOME}/runtime/include",
+    "-I","${env:WAKE_HOME}/runtime/include/wake-tools/jit-v0.1w",
+    "-I","${env:WAKE_HOME}/runtime/include/wake-tools/imgui-v0.1w",
+    "-I","${env:WAKE_HOME}/runtime/include/wake-tools/sapp-v0.1w",
+    "-I","${env:WAKE_HOME}/runtime/include/wake-tools/sgfx-v0.1w",
+    "-I","${env:WAKE_HOME}/runtime/include/wake-tools/sokol-v0.1w",
+    "-I","${env:WAKE_HOME}/runtime/module/w32-r/wake-tools/tcc-v0.1w/include"
+  ]
+}

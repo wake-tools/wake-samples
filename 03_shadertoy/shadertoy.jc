@@ -1,0 +1,156 @@
+/* SPDX-License-Identifier: Zlib
+|-------------------------------------------------------------------------------------------------------->>
+| https://wake.tools - [shadertoy.jc] - JIT C Runtime - C99+
+|-------------------------------------------------------------------------------------------------------->>
+|  Directly render shadertoy from
+|  Render shader directly from Shadertoy.com
+|  => just copy the fragment code into shadertoy.fs and run wake shadertoy.jc to see it live
+|
+|  https://www.shadertoy.com/
+|-------------------------------------------------------------------------------------------------------->>
+| run: wake shadertoy.jc
+|-------------------------------------------------------------------------------------------------------->>
+| WAKE-LANG (Wake-Lang Executable Metadata - parsed by Wake - targets: w32, w64 [Windows 32/64-bit])
+|-------------------------------------------------------------------------------------------------------->>
+	<:jit:w32|w64>
+		#Jit.add .sm/shadertoy.sm
+		>
+		|#Jit.depends shadertoy.fs
+		|#Jit.depends base.glsl
+		>
+		|{wk.module.hsys.r}wake-tools/shdc-v0.1w/sokol-shdc.exe --input stbase.glsl --output .sm/stbase.glslh --slang hlsl4 -b
+		>
+		{wk.module.sys.r}wake-tools/tcc-v0.1w/tcc
+			-xc -shared {this.file}
+
+			-b -l.{build.sys.r}.wake-tools--tcc.bcheck-atom-v0.1w
+			-gdwarf-5
+			-Werror
+			-bench
+			-v
+
+			-L {wk.libs}
+            	-l.{build.sys}.wake-tools--jit-v0.1w         -I {wk.include}wake-tools/jit-v0.1w
+				-l.{build.sys}.wake-tools--sokol-ig-v0.1w    -I {wk.include}wake-tools/sokol-v0.1w
+				-l.{build.sys}.wake-tools--imgui-v0.1w       -I {wk.include}wake-tools/imgui-v0.1w
+				-l.{build.sys}.wake-tools--sapp-v0.1w        -I {wk.include}wake-tools/sapp-v0.1w
+				-l.{build.sys}.wake-tools--sgfx-v0.1w        -I {wk.include}wake-tools/sgfx-v0.1w
+
+		-o {jit.file}
+		>
+		#Jit.reload
+	<:/jit:>
+|-------------------------------------------------------------------------------------------------------->>
+*/
+#include <jit.h>
+#define USE_DBG_UI
+#include <sokol.h>
+
+#define LOG(fmt, ...) printf("a: [shadertoy.jc]:%s:%d: " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__)
+
+#include "sokol_log.h"
+#include ".sm/stbase.glslh"
+
+
+static struct {
+    sg_pipeline pip;
+    sg_bindings bind;
+    sg_pass_action pass_action;
+    fs_params_t fs_params;
+} state;
+
+static bool s_mouse_down = false;
+
+static void event(const sapp_event* ev) {
+    __cdbgui_event(ev);
+    switch (ev->type) {
+        case SAPP_EVENTTYPE_MOUSE_DOWN:
+            s_mouse_down = true;
+            break;
+        case SAPP_EVENTTYPE_MOUSE_UP:
+            s_mouse_down = false;
+            break;
+        case SAPP_EVENTTYPE_MOUSE_MOVE: {
+            float mx = (float)ev->mouse_x;
+            float my = (float)ev->mouse_y;
+            state.fs_params.iMouse[0] = mx;
+            state.fs_params.iMouse[1] = my;
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+static void init(void) {
+    sg_setup(&(sg_desc){
+        .environment = sglue_environment(),
+        .logger.func = slog_func,
+    });
+    __cdbgui_setup(sapp_sample_count());
+
+    // a vertex buffer to render a 'fullscreen triangle'
+    float fsq_verts[] = { -1.0f, -3.0f, 3.0f, 1.0f, -1.0f, 1.0f };
+    state.bind.vertex_buffers[0] = sg_make_buffer(&(sg_buffer_desc){
+        .data = SG_RANGE(fsq_verts),
+        .label = "fsq vertices"
+    });
+
+    // shader and pipeline object for rendering a fullscreen quad
+    state.pip = sg_make_pipeline(&(sg_pipeline_desc){
+        .layout = {
+            .attrs[ATTR_shadertoy_position].format = SG_VERTEXFORMAT_FLOAT2
+        },
+        .shader = sg_make_shader(shadertoy_shader_desc(sg_query_backend())),
+    });
+
+    // don't need to clear since the whole framebuffer is overwritten
+    state.pass_action = (sg_pass_action) {
+        .colors[0] = { .load_action = SG_LOADACTION_DONTCARE }
+    };
+}
+
+static void frame(void) {
+    
+    int w = sapp_width();
+    int h = sapp_height();
+    state.fs_params.iTime += (float)sapp_frame_duration();
+    state.fs_params.iResolution[0] = (float)w;
+    state.fs_params.iResolution[1] = (float)h;
+    // viewport offset not used, keep zeros
+    sg_begin_pass(&(sg_pass){ .action = state.pass_action, .swapchain = sglue_swapchain() });
+    sg_apply_pipeline(state.pip);
+    sg_apply_bindings(&state.bind);
+    sg_apply_uniforms(UB_fs_params, &SG_RANGE(state.fs_params));
+    sg_draw(0, 3, 1);
+    __cdbgui_draw();
+    sg_end_pass();
+    sg_commit();
+    if(jit_request_close) sapp_quit();
+}
+
+static void cleanup(void) {
+    __cdbgui_shutdown();
+    sg_shutdown();
+}
+
+int main(int argc, char *argv[]) {
+    LOG("Welcome to Shadertoy Rendering!");
+    sapp_run(&(sapp_desc) {
+        .init_cb = init,
+        .frame_cb = frame,
+        .cleanup_cb = cleanup,
+        .event_cb = event,
+        .width = 512,
+        .height = 512,
+        .swap_interval = 1,
+        .window_title = "Shadertoy Rendering",
+        .icon.sokol_default = true,
+        .logger.func = slog_func,
+    });
+    #ifndef HAS_ASYNC_LOOP
+    sapp_quit();
+    #endif
+    return 0;
+}
+
