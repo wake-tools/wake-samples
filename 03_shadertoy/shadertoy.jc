@@ -2,7 +2,6 @@
 |-------------------------------------------------------------------------------------------------------->>
 | https://wake.tools - [shadertoy.jc] - JIT C Runtime - C99+
 |-------------------------------------------------------------------------------------------------------->>
-|  Directly render shadertoy from
 |  Render shader directly from Shadertoy.com
 |  => just copy the fragment code into shadertoy.fs and run wake shadertoy.jc to see it live
 |
