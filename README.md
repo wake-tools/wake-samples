@@ -14,16 +14,29 @@ and converted to Wake’s live runtime environment with **memory bound checking*
 Wake samples now include
 - ✅ **VS Code** support with proper include paths and C99 settings  
 - ✅ **IntelliSense** auto-completion and diagnostics  
-- ✅ **clangd / [Cursor](https://cursor.com/download)** support for fast and accurate code navigation
+- ✅ **clangd support for fast and accurate code navigation
 
 Simply open the sample folder in your favorite editor
 all paths are already configured in `.vscode/c_cpp_properties.json`.
 
+## Tutorial
+
+### > How to get Super Power using IA + Wake
+(Give me power)[AI_skill.md]
+> No errors. No pain. Talk to Create. Feels like no-code. Is it real?
 ---
 
-## 🚀 Run a Sample
+##  Get Started
+
+> **Grab Wake Runtime**  
+> [Wake.Tools/Register](https://wake.tools/register.html)
+>
+
+### 🚀 Run a Sample
 
 ```bash
+# Double click on .jc
+#  --- or ---
 # From the sample folder
 wake clear-sapp.jc
 wake cube-sapp.jc
