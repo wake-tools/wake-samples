@@ -10,19 +10,15 @@ and converted to Wake’s live runtime environment with **memory bound checking*
 ---
 
 ## Multi-Editor Support
-
-Wake samples now include
 - ✅ **VS Code** support with proper include paths and C99 settings  
 - ✅ **IntelliSense** auto-completion and diagnostics  
-- ✅ **clangd support for fast and accurate code navigation
+- ✅ **clangd** support for fast and accurate code navigation
 
-Simply open the sample folder in your favorite editor
-all paths are already configured in `.vscode/c_cpp_properties.json`.
+> Simply open the sample folder in your favorite editor (preconfigured in `.vscode/c_cpp_properties.json`)
 
-## Tutorial
+## Tutorials
 
-### > How to get Super Power using IA + Wake
-(Give me power)[AI_skill.md]
+### 1- [Give me power](AI_skill.md) - _How to get Super Power using IA + Wake_
 > No errors. No pain. Talk to Create. Feels like no-code. Is it real?
 ---
 
