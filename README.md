@@ -1,7 +1,7 @@
 # [Wake](https://github.com/wake-tools/Wake) Samples
 
-A collection of **JIT C** _`.jc`_ demos running instantly with **Wake** —  
-no build system, no waiting, just **code → run**.
+A collection of **JIT C** _`.jc`_ demos running instantly with **Wake**
+> no build system, no waiting, just **code → run**.
 
 All examples are adapted from the official **Sokol samples** (zlib/libpng license)  
 and converted to Wake’s live runtime environment with **memory bound checking**,  
@@ -24,10 +24,9 @@ and converted to Wake’s live runtime environment with **memory bound checking*
 
 ##  Get Started
 
-> **Grab Wake Runtime**  
-> [Wake.Tools/Register](https://wake.tools/register.html)
->
+### > [Get Wake Runtime](https://wake.tools/register.html)
 
+---
 ### 🚀 Run a Sample
 
 ```bash
