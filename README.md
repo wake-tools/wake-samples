@@ -12,9 +12,9 @@ and converted to Wake’s live runtime environment with **memory bound checking*
 ## Multi-Editor Support
 - ✅ **VS Code** support with proper include paths and C99 settings  
 - ✅ **IntelliSense** auto-completion and diagnostics  
-- ✅ **clangd** support for fast and accurate code navigation
+- ✅ **clangd** support for fast navigation and lint checks
 
-> Simply open the sample folder in your favorite editor (preconfigured in `.vscode/c_cpp_properties.json`)
+> Simply open the sample folder in your favorite editor (preconfigured in `.vscode/`)
 
 ## Tutorials
 
