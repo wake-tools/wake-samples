@@ -7,27 +7,22 @@ All examples are adapted from the official **Sokol samples** (zlib/libpng licens
 and converted to Wake’s live runtime environment with **memory bound checking**,  
 **hot reload**, and **debug UI** support.
 
----
 
-## Multi-Editor Support
-- ✅ **VS Code** support with proper include paths and C99 settings  
-- ✅ **IntelliSense** auto-completion and diagnostics  
-- ✅ **clangd** support for fast navigation and lint checks
 
 > Simply open the sample folder in your favorite editor (preconfigured in `.vscode/`)
 
-## Tutorials
-
-### 1- [Give me power](AI_skill.md) - _How to get Super Power using IA + Wake_
-> No errors. No pain. Talk to Create. Feels like no-code. Is it real?
----
 
 ##  Get Started
 
+### Multi-Editor Support
+- ✅ **VS Code** support with proper include paths and C99 settings  
+- ✅ **IntelliSense** auto-completion and diagnostics  
+- ✅ **clangd** support for fast navigation and lint checks
+- ✅ **Notepad++**, with goto line on errors
+
 ### > [Get Wake Runtime](https://wake.tools/register.html)
 
----
-### 🚀 Run a Sample
+### > Run a Sample
 
 ```bash
 # Double click on .jc
